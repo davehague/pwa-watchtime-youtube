@@ -23,8 +23,11 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Channel not found' });
     }
     const html = await resp.text();
-    const idMatch = html.match(/"(?:channelId|externalId)":"(UC[\w-]+)"/);
-    const resolvedId = channelId || (idMatch ? idMatch[1] : null);
+    // Prefer externalId (canonical ID for the @handle owner) over channelId
+    // (which can be a localized variant like a Spanish sub-channel)
+    const extMatch = html.match(/"externalId":"(UC[\w-]+)"/);
+    const chMatch = html.match(/"channelId":"(UC[\w-]+)"/);
+    const resolvedId = channelId || (extMatch ? extMatch[1] : chMatch ? chMatch[1] : null);
     if (!resolvedId) {
       return res.status(404).json({ error: 'Could not extract channel ID' });
     }
