@@ -588,8 +588,7 @@
   </div>
 
   <div style="display:flex; gap:10px; margin-top:16px; padding-bottom:40px;">
-    <button class="btn btn-primary btn-block" id="saveBtn">Save & Exit</button>
-    <button class="btn btn-secondary btn-block" id="cancelBtn">Cancel</button>
+    <button class="btn btn-primary btn-block" id="saveBtn">Save</button>
   </div>
 </div>
 
@@ -1294,7 +1293,7 @@ $('addChannelBtn').onclick = async () => {
   $('addId').value = '';
 };
 
-$('saveBtn').onclick = async () => {
+const saveAndExit = async () => {
   const t = parseInt($('setTimer').value);
   const p = $('setPin').value;
   if (isNaN(t) || t < 5) return alert('Timer must be at least 5 seconds');
@@ -1306,15 +1305,13 @@ $('saveBtn').onclick = async () => {
   renderChannels();
   resetTimerUI();
 };
-
-const cancelSettings = async () => {
+$('saveBtn').onclick = saveAndExit;
+$('settingsBackBtn').onclick = async () => {
   cfg = await loadConfig();
   showOnly('channelScreen');
   renderChannels();
   resetTimerUI();
 };
-$('cancelBtn').onclick = cancelSettings;
-$('settingsBackBtn').onclick = cancelSettings;
 
 // =============================================
 // YOUTUBE IFRAME API
