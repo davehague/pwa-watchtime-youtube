@@ -84,7 +84,17 @@
     overflow-x: hidden;
     overflow-y: auto;
   }
-  body.rotated .overlay { width: 100vh; height: 100vw; }
+  body.rotated .times-up { gap: 6px; }
+  body.rotated .times-up .big-icon { font-size: 50px; }
+  body.rotated .times-up h1 { font-size: 24px; }
+  body.rotated .times-up p { font-size: 14px; padding: 0 16px; }
+  body.rotated .times-up .stars { font-size: 20px; }
+  body.rotated .overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+  }
   body.rotated .screen { min-height: 100vw; }
   .timer-right { display: flex; align-items: center; gap: 8px; }
   .settings-btn, .quick-timer-btn {
@@ -149,16 +159,19 @@
   .quick-timer-presets button.selected { border-color: var(--green); color: var(--green); }
 
   .back-btn {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    height: 36px;
-    padding: 0 12px;
-    border-radius: 10px;
-    font-size: 14px;
+    background: var(--blue);
+    border: none;
+    color: #fff;
+    height: 42px;
+    padding: 0 16px;
+    border-radius: 21px;
+    font-size: 22px;
+    font-weight: 700;
     cursor: pointer;
     display: none;
+    letter-spacing: 1px;
   }
+  .back-btn:active { transform: scale(0.9); }
 
   /* ---- SCREENS ---- */
   .screen { padding-top: 62px; min-height: 100vh; }
@@ -443,7 +456,7 @@
 <!-- TIMER BAR -->
 <div class="timer-bar" id="timerBar">
   <div class="timer-left">
-    <button class="back-btn" id="backBtn">← Back</button>
+    <button class="back-btn" id="backBtn">◀ Back</button>
     <div>
       <div class="timer-label" id="timerLabel">Session Time</div>
       <div class="timer-display plenty" id="timerDisplay">--:--</div>
