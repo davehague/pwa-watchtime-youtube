@@ -1,4 +1,4 @@
-const CACHE_NAME = 'watchtime-v1';
+const CACHE_NAME = 'watchtime-v2';
 const SHELL = ['/', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -23,7 +23,19 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Cache-first for app shell
+  // Network-first for HTML (so deploys take effect immediately)
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        const clone = resp.clone();
+        caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        return resp;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // Cache-first for static assets (icons, manifest)
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );
