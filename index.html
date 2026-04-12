@@ -73,6 +73,16 @@
   .timer-progress.warning { background: var(--yellow); }
   .timer-progress.critical { background: var(--red); }
 
+  body.rotated { overflow: hidden; }
+  body.rotated #app {
+    transform: rotate(90deg);
+    transform-origin: top left;
+    position: absolute;
+    top: 0; left: 100%;
+    width: 100vh;
+    height: 100vw;
+    overflow: auto;
+  }
   .timer-right { display: flex; align-items: center; gap: 8px; }
   .settings-btn, .quick-timer-btn {
     background: var(--surface-2);
@@ -417,6 +427,7 @@
 </style>
 </head>
 <body>
+<div id="app">
 
 <!-- TIMER BAR -->
 <div class="timer-bar" id="timerBar">
@@ -428,6 +439,7 @@
     </div>
   </div>
   <div class="timer-right">
+    <button class="settings-btn" id="rotateBtn" title="Rotate">↻</button>
     <button class="quick-timer-btn" id="quickTimerBtn">⏱</button>
     <button class="settings-btn" id="settingsBtn">⚙</button>
   </div>
@@ -524,6 +536,7 @@
   </div>
 </div>
 
+</div><!-- /app -->
 <script>
 // =============================================
 // CONFIG
@@ -1173,6 +1186,9 @@ if ('serviceWorker' in navigator) {
 
 // Try to lock to landscape (works in installed PWA / fullscreen)
 try { screen.orientation.lock('landscape').catch(() => {}); } catch(e) {}
+
+// Manual rotate toggle
+$('rotateBtn').onclick = () => document.body.classList.toggle('rotated');
 </script>
 </body>
 </html>
