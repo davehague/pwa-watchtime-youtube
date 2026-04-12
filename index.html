@@ -694,7 +694,8 @@ function showOnly(screenId) {
   $('timerBar').classList.toggle('hidden', screenId === 'settingsScreen');
   const showNav = screenId === 'videoListScreen' || screenId === 'playerScreen' || screenId === 'upNextScreen';
   $('backBtn').style.display = showNav ? 'inline-flex' : 'none';
-  $('rotateBtn').style.display = showNav ? 'inline-flex' : 'none';
+  const isSilk = /\bSilk\b/i.test(navigator.userAgent);
+  $('rotateBtn').style.display = (showNav && !isSilk) ? 'inline-flex' : 'none';
   $('timerLabel').textContent = screenId === 'channelScreen' ? 'Session Time' : 
     timer.running ? 'Time Left' : 'Session Time';
 }
