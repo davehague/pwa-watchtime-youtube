@@ -1293,7 +1293,7 @@ $('addChannelBtn').onclick = async () => {
   $('addId').value = '';
 };
 
-const saveAndExit = async () => {
+$('saveBtn').onclick = async () => {
   const t = parseInt($('setTimer').value);
   const p = $('setPin').value;
   if (isNaN(t) || t < 5) return alert('Timer must be at least 5 seconds');
@@ -1301,17 +1301,16 @@ const saveAndExit = async () => {
   cfg.timerSeconds = t;
   cfg.pin = p;
   await saveConfig(cfg);
-  showOnly('channelScreen');
-  renderChannels();
-  resetTimerUI();
+  $('saveBtn').textContent = 'Saved!';
+  setTimeout(() => $('saveBtn').textContent = 'Save', 1500);
 };
-$('saveBtn').onclick = saveAndExit;
-$('settingsBackBtn').onclick = async () => {
+const exitSettings = async () => {
   cfg = await loadConfig();
   showOnly('channelScreen');
   renderChannels();
   resetTimerUI();
 };
+$('settingsBackBtn').onclick = exitSettings;
 
 // =============================================
 // YOUTUBE IFRAME API
