@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WatchTime</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface-2: #16213e;
+    --border: #2a2a4a;
+    --text: #f0f0f0;
+    --text-muted: #8888aa;
+    --green: #4ecca3;
+    --yellow: #f9a825;
+    --red: #e94560;
+    --blue: #3b82f6;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+
+  /* ---- TIMER BAR ---- */
+  .timer-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    z-index: 100;
+    border-bottom: 2px solid var(--border);
+  }
+  .timer-left { display: flex; align-items: center; gap: 10px; }
+  .timer-label { font-size: 13px; color: var(--text-muted); }
+  .timer-display {
+    font-size: 32px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+    transition: color 0.3s;
+  }
+  .timer-display.plenty { color: var(--green); }
+  .timer-display.warning { color: var(--yellow); }
+  .timer-display.critical { color: var(--red); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  
+  .timer-progress {
+    position: absolute;
+    bottom: 0; left: 0;
+    height: 3px;
+    background: var(--green);
+    transition: width 1s linear, background 0.5s;
+  }
+  .timer-progress.warning { background: var(--yellow); }
+  .timer-progress.critical { background: var(--red); }
+
+  .settings-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .back-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    display: none;
+  }
+
+  /* ---- SCREENS ---- */
+  .screen { padding-top: 62px; min-height: 100vh; }
+
+  /* ---- CHANNEL SELECT ---- */
+  .channel-header {
+    text-align: center;
+    padding: 12px 16px 4px;
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .channel-sub {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .channel-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 0 12px 24px;
+  }
+  .channel-card {
+    border-radius: 16px;
+    padding: 20px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.12s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 110px;
+    position: relative;
+    overflow: hidden;
+  }
+  .channel-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: inherit;
+    filter: brightness(0.4);
+    z-index: 0;
+  }
+  .channel-card > * { position: relative; z-index: 1; }
+  .channel-card:active { transform: scale(0.93); }
+  .channel-card .emoji { font-size: 44px; }
+  .channel-card .name { font-size: 16px; font-weight: 700; }
+
+  /* ---- VIDEO LIST ---- */
+  .video-list-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .video-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 12px 24px;
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+  }
+  .video-card {
+    display: flex;
+    gap: 10px;
+    background: var(--surface);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.12s;
+    min-height: 80px;
+  }
+  .video-card:active { transform: scale(0.97); }
+  .video-card .thumb {
+    width: 140px;
+    min-width: 140px;
+    height: 80px;
+    object-fit: cover;
+    background: var(--surface-2);
+  }
+  .video-card .info {
+    padding: 8px 8px 8px 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .video-card .title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .video-loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 18px;
+  }
+  .video-loading .spinner {
+    display: inline-block;
+    width: 32px; height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- PLAYER ---- */
+  .player-container { padding-top: 52px; height: 100vh; }
+  .player-wrapper { width: 100%; height: calc(100vh - 52px); background: #000; }
+  .player-wrapper iframe { width: 100%; height: 100%; border: none; }
+
+  /* ---- TIME'S UP ---- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+  .times-up {
+    background: var(--bg);
+  }
+  .times-up .big-icon { font-size: 72px; }
+  .times-up h1 { font-size: 32px; color: var(--red); font-weight: 800; }
+  .times-up p { font-size: 16px; color: var(--text-muted); text-align: center; padding: 0 24px; }
+
+  /* ---- PIN PAD ---- */
+  .pin-overlay {
+    background: rgba(0,0,0,0.92);
+    z-index: 2000;
+  }
+  .pin-overlay h2 { font-size: 18px; font-weight: 600; color: var(--text-muted); }
+  .pin-dots { display: flex; gap: 14px; margin: 12px 0 20px; }
+  .pin-dot {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--green);
+    transition: background 0.15s;
+  }
+  .pin-dot.filled { background: var(--green); }
+  .pin-dot.error { border-color: var(--red); background: var(--red); }
+  .pin-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    max-width: 260px;
+  }
+  .pin-key {
+    width: 68px; height: 68px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 26px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+  }
+  .pin-key:active { background: var(--surface-2); }
+  .pin-cancel {
+    margin-top: 16px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 15px;
+    cursor: pointer;
+    padding: 8px 16px;
+  }
+
+  /* ---- SETTINGS ---- */
+  .settings-screen {
+    padding: 62px 12px 100px;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+  .settings-screen h2 {
+    font-size: 20px;
+    margin-bottom: 16px;
+  }
+  .s-group {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .s-group h3 {
+    font-size: 14px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+  .s-group input, .s-group select {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 6px;
+  }
+  .s-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px;
+    background: var(--bg);
+    border-radius: 8px;
+    margin-bottom: 6px;
+  }
+  .s-row .label { font-size: 14px; }
+  .s-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: -2px;
+    margin-bottom: 8px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--green); color: var(--bg); }
+  .btn-danger { background: var(--red); color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 8px; }
+  .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  .btn-block { width: 100%; }
+
+  .hidden { display: none !important; }
+  
+  /* Colors for cards */
+  .color-swatch {
+    display: inline-block;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  .color-swatch.selected { border-color: #fff; }
+  .color-picker { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<!-- TIMER BAR -->
+<div class="timer-bar" id="timerBar">
+  <div class="timer-left">
+    <button class="back-btn" id="backBtn">← Back</button>
+    <div>
+      <div class="timer-label" id="timerLabel">Session Time</div>
+      <div class="timer-display plenty" id="timerDisplay">--:--</div>
+    </div>
+  </div>
+  <button class="settings-btn" id="settingsBtn">⚙</button>
+  <div class="timer-progress" id="timerProgress" style="width:100%"></div>
+</div>
+
+<!-- SCREEN: Channel Select -->
+<div class="screen" id="channelScreen">
+  <div class="channel-header">What do you want to watch?</div>
+  <div class="channel-sub">Pick a channel to start your session</div>
+  <div class="channel-grid" id="channelGrid"></div>
+</div>
+
+<!-- SCREEN: Video List -->
+<div class="screen hidden" id="videoListScreen">
+  <div class="video-list-header" id="videoListHeader"></div>
+  <div class="video-grid" id="videoGrid"></div>
+</div>
+
+<!-- SCREEN: Player -->
+<div class="player-container hidden" id="playerScreen">
+  <div class="player-wrapper" id="playerWrapper">
+    <div id="ytPlayer"></div>
+  </div>
+</div>
+
+<!-- OVERLAY: Time's Up -->
+<div class="overlay times-up hidden" id="timesUpOverlay">
+  <div class="big-icon">⏰</div>
+  <h1>Time's Up!</h1>
+  <p>Great watching! Time to do something else now.</p>
+  <button class="btn btn-primary" id="timesUpBtn" style="margin-top:12px;">🔒 Parent Unlock</button>
+</div>
+
+<!-- OVERLAY: PIN -->
+<div class="overlay pin-overlay hidden" id="pinOverlay">
+  <h2 id="pinTitle">Enter PIN</h2>
+  <div class="pin-dots" id="pinDots"></div>
+  <div class="pin-pad" id="pinPad"></div>
+  <button class="pin-cancel" id="pinCancel">Cancel</button>
+</div>
+
+<!-- SCREEN: Settings -->
+<div class="settings-screen hidden" id="settingsScreen">
+  <h2>⚙ Settings</h2>
+
+  <div class="s-group">
+    <h3>Session Timer (seconds — switch to minutes later)</h3>
+    <input type="number" id="setTimer" min="5" max="7200" inputmode="numeric">
+    <div class="s-hint">Starts when a channel is tapped. Counts down during browsing and watching.</div>
+  </div>
+
+  <div class="s-group">
+    <h3>Parent PIN</h3>
+    <input type="text" id="setPin" maxlength="4" pattern="\d{4}" inputmode="numeric">
+  </div>
+
+  <div class="s-group">
+    <h3>Channels</h3>
+    <div id="settingsChannelList"></div>
+    <hr style="border-color:var(--border); margin:10px 0">
+    <h3>Add Channel</h3>
+    <input type="text" id="addName" placeholder="Display name (e.g. Ms Rachel)">
+    <input type="text" id="addId" placeholder="YouTube Channel ID (starts with UC...)">
+    <div class="s-hint">Find this in the channel URL: youtube.com/channel/<strong>UCxxxxx</strong></div>
+    <input type="text" id="addEmoji" placeholder="Emoji (e.g. 🎵)" maxlength="4">
+    <div class="color-picker" id="colorPicker"></div>
+    <button class="btn btn-primary" id="addChannelBtn">+ Add Channel</button>
+  </div>
+
+  <div style="display:flex; gap:10px; margin-top:16px; padding-bottom:40px;">
+    <button class="btn btn-primary btn-block" id="saveBtn">Save & Exit</button>
+    <button class="btn btn-secondary btn-block" id="cancelBtn">Cancel</button>
+  </div>
+</div>
+
+<script>
+// =============================================
+// CONFIG
+// =============================================
+const COLORS = ['#e94560','#3b82f6','#4ecca3','#f59e0b','#a855f7','#ec4899','#06b6d4','#84cc16'];
+
+const DEFAULT_CONFIG = {
+  pin: '1234',
+  timerSeconds: 30,
+  channels: [
+    { name: 'Ms Rachel', id: 'UCG2CL6EUjG8TVT1Tpl9nJdg', emoji: '🎵', color: '#e94560' },
+    { name: 'Bluey', id: 'UCVzLLZkDuFGAE2BGdBuBNBg', emoji: '🐶', color: '#3b82f6' },
+    { name: 'Cocomelon', id: 'UCbCmjCuTUZos6Inko4u57UQ', emoji: '🍉', color: '#4ecca3' },
+  ]
+};
+
+function loadConfig() {
+  try {
+    const s = localStorage.getItem('wt_cfg');
+    if (s) return JSON.parse(s);
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+}
+function saveConfig(c) { localStorage.setItem('wt_cfg', JSON.stringify(c)); }
+
+let cfg = loadConfig();
+
+// =============================================
+// STATE
+// =============================================
+let timer = { remaining: 0, total: 0, interval: null, running: false };
+let pinState = { buffer: '', callback: null };
+let selectedColor = COLORS[0];
+let ytPlayer = null;
+let ytReady = false;
+
+// =============================================
+// DOM refs
+// =============================================
+const $ = id => document.getElementById(id);
+
+// =============================================
+// TIMER
+// =============================================
+function startSession() {
+  timer.total = cfg.timerSeconds;
+  timer.remaining = cfg.timerSeconds;
+  timer.running = true;
+  updateTimerUI();
+  timer.interval = setInterval(() => {
+    timer.remaining = Math.max(0, timer.remaining - 1);
+    updateTimerUI();
+    if (timer.remaining <= 0) {
+      stopSession();
+      onTimesUp();
+    }
+  }, 1000);
+}
+
+function stopSession() {
+  clearInterval(timer.interval);
+  timer.running = false;
+}
+
+function updateTimerUI() {
+  const s = timer.remaining;
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  const el = $('timerDisplay');
+  el.textContent = `${m}:${String(ss).padStart(2, '0')}`;
+
+  const pct = timer.total > 0 ? s / timer.total : 1;
+  const cls = pct > 0.5 ? 'plenty' : pct > 0.2 ? 'warning' : 'critical';
+  el.className = `timer-display ${cls}`;
+
+  const bar = $('timerProgress');
+  bar.style.width = `${pct * 100}%`;
+  bar.className = `timer-progress ${cls}`;
+}
+
+function resetTimerUI() {
+  const s = cfg.timerSeconds;
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  $('timerDisplay').textContent = `${m}:${String(ss).padStart(2, '0')}`;
+  $('timerDisplay').className = 'timer-display plenty';
+  $('timerProgress').style.width = '100%';
+  $('timerProgress').className = 'timer-progress';
+}
+
+// =============================================
+// SCREENS
+// =============================================
+function showOnly(screenId) {
+  ['channelScreen','videoListScreen','playerScreen','settingsScreen'].forEach(id => {
+    $(id).classList.toggle('hidden', id !== screenId);
+  });
+  $('timerBar').classList.toggle('hidden', screenId === 'settingsScreen');
+  $('backBtn').style.display = (screenId === 'videoListScreen' || screenId === 'playerScreen') ? 'inline-flex' : 'none';
+  $('timerLabel').textContent = screenId === 'channelScreen' ? 'Session Time' : 
+    timer.running ? 'Time Left' : 'Session Time';
+}
+
+// =============================================
+// CHANNEL SELECT
+// =============================================
+function renderChannels() {
+  const grid = $('channelGrid');
+  grid.innerHTML = '';
+  if (cfg.channels.length === 0) {
+    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px 0;">No channels yet.<br>Tap ⚙ to add some!</p>';
+    return;
+  }
+  cfg.channels.forEach((ch, i) => {
+    const card = document.createElement('div');
+    card.className = 'channel-card';
+    card.style.background = ch.color;
+    card.innerHTML = `<div class="emoji">${ch.emoji}</div><div class="name">${ch.name}</div>`;
+    card.onclick = () => selectChannel(ch);
+    grid.appendChild(card);
+  });
+}
+
+// =============================================
+// VIDEO LIST (via RSS → JSON proxy or fallback)
+// =============================================
+async function selectChannel(ch) {
+  if (!timer.running) startSession();
+  showOnly('videoListScreen');
+  $('videoListHeader').innerHTML = `${ch.emoji} <span>${ch.name}</span>`;
+  $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading videos...</div>`;
+
+  const videos = await fetchVideos(ch.id);
+
+  if (timer.remaining <= 0) return; // session ended while loading
+
+  if (videos.length === 0) {
+    $('videoGrid').innerHTML = `<div class="video-loading">Couldn't load videos.<br>Check the Channel ID in settings.</div>`;
+    return;
+  }
+
+  $('videoGrid').innerHTML = '';
+  videos.slice(0, 10).forEach(v => {
+    const card = document.createElement('div');
+    card.className = 'video-card';
+    card.innerHTML = `
+      <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
+      <div class="info"><div class="title">${escHtml(v.title)}</div></div>
+    `;
+    card.onclick = () => playVideo(v.videoId);
+    $('videoGrid').appendChild(card);
+  });
+}
+
+async function fetchVideos(channelId) {
+  // Try the public RSS feed via a CORS-friendly approach
+  // YouTube RSS: https://www.youtube.com/feeds/videos.xml?channel_id=XXXXX
+  // We'll try multiple CORS proxies, then fall back to playlist embed
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  const proxies = [
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxy of proxies) {
+    try {
+      const resp = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(6000) });
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      return parseAtomFeed(text);
+    } catch(e) {
+      continue;
+    }
+  }
+
+  // If CORS proxies fail, try direct fetch (works if served from same Caddy with a proxy route)
+  try {
+    const resp = await fetch(`/yt-feed/${channelId}`, { signal: AbortSignal.timeout(5000) });
+    if (resp.ok) {
+      const text = await resp.text();
+      return parseAtomFeed(text);
+    }
+  } catch(e) {}
+
+  // Final fallback: construct video IDs from known playlist pattern
+  // This won't have titles but gives us thumbnails
+  return [];
+}
+
+function parseAtomFeed(xml) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xml, 'text/xml');
+  const entries = doc.querySelectorAll('entry');
+  const videos = [];
+  entries.forEach(entry => {
+    const videoId = entry.querySelector('videoId')?.textContent ||
+                    entry.querySelector('id')?.textContent?.split(':').pop() || '';
+    const title = entry.querySelector('title')?.textContent || 'Untitled';
+    if (videoId) {
+      videos.push({
+        videoId,
+        title,
+        thumb: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
+      });
+    }
+  });
+  return videos;
+}
+
+function escHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// =============================================
+// PLAYER
+// =============================================
+function playVideo(videoId) {
+  if (timer.remaining <= 0) return;
+  showOnly('playerScreen');
+
+  // Destroy existing player
+  if (ytPlayer) {
+    try { ytPlayer.destroy(); } catch(e) {}
+    ytPlayer = null;
+  }
+  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div>';
+
+  if (ytReady) {
+    createPlayer(videoId);
+  } else {
+    // Wait for API
+    const check = setInterval(() => {
+      if (ytReady) {
+        clearInterval(check);
+        createPlayer(videoId);
+      }
+    }, 200);
+  }
+}
+
+function createPlayer(videoId) {
+  ytPlayer = new YT.Player('ytPlayer', {
+    width: '100%',
+    height: '100%',
+    videoId: videoId,
+    playerVars: {
+      autoplay: 1,
+      modestbranding: 1,
+      rel: 0,
+      playsinline: 1,
+      fs: 0,
+    },
+    events: {
+      onReady: e => e.target.playVideo(),
+    }
+  });
+}
+
+// =============================================
+// TIME'S UP
+// =============================================
+function onTimesUp() {
+  if (ytPlayer) {
+    try { ytPlayer.pauseVideo(); } catch(e) {}
+  }
+  $('timesUpOverlay').classList.remove('hidden');
+}
+
+$('timesUpBtn').onclick = () => {
+  requestPin(ok => {
+    if (ok) {
+      $('timesUpOverlay').classList.add('hidden');
+      destroyPlayer();
+      showOnly('channelScreen');
+      resetTimerUI();
+    }
+  });
+};
+
+function destroyPlayer() {
+  if (ytPlayer) {
+    try { ytPlayer.destroy(); } catch(e) {}
+    ytPlayer = null;
+  }
+  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div>';
+}
+
+// =============================================
+// BACK BUTTON
+// =============================================
+$('backBtn').onclick = () => {
+  const current = !$('playerScreen').classList.contains('hidden') ? 'player' :
+                  !$('videoListScreen').classList.contains('hidden') ? 'videoList' : null;
+  if (current === 'player') {
+    destroyPlayer();
+    showOnly('videoListScreen');
+  } else if (current === 'videoList') {
+    // Going back to channels does NOT stop the timer — session is still running
+    showOnly('channelScreen');
+  }
+};
+
+// =============================================
+// PIN PAD
+// =============================================
+function requestPin(callback) {
+  pinState = { buffer: '', callback };
+  renderPinDots();
+  $('pinOverlay').classList.remove('hidden');
+}
+
+function renderPinDots(error) {
+  const el = $('pinDots');
+  el.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'pin-dot' + (i < pinState.buffer.length ? (error ? ' error' : ' filled') : '');
+    el.appendChild(dot);
+  }
+}
+
+function buildPinPad() {
+  const pad = $('pinPad');
+  [1,2,3,4,5,6,7,8,9,null,0,'⌫'].forEach(key => {
+    if (key === null) { pad.innerHTML += '<div></div>'; return; }
+    const btn = document.createElement('button');
+    btn.className = 'pin-key';
+    btn.textContent = key;
+    btn.onclick = () => onPinKey(key);
+    pad.appendChild(btn);
+  });
+}
+
+function onPinKey(key) {
+  if (key === '⌫') {
+    pinState.buffer = pinState.buffer.slice(0, -1);
+    renderPinDots();
+    return;
+  }
+  pinState.buffer += String(key);
+  renderPinDots();
+  if (pinState.buffer.length === 4) {
+    const ok = pinState.buffer === cfg.pin;
+    if (!ok) {
+      renderPinDots(true);
+      setTimeout(() => {
+        pinState.buffer = '';
+        renderPinDots();
+      }, 500);
+      return;
+    }
+    $('pinOverlay').classList.add('hidden');
+    pinState.callback?.(true);
+    pinState = { buffer: '', callback: null };
+  }
+}
+
+$('pinCancel').onclick = () => {
+  $('pinOverlay').classList.add('hidden');
+  pinState.callback?.(false);
+  pinState = { buffer: '', callback: null };
+};
+
+// =============================================
+// SETTINGS
+// =============================================
+$('settingsBtn').onclick = () => {
+  requestPin(ok => {
+    if (ok) openSettings();
+  });
+};
+
+function openSettings() {
+  stopSession();
+  destroyPlayer();
+  $('setTimer').value = cfg.timerSeconds;
+  $('setPin').value = cfg.pin;
+  renderSettingsChannels();
+  renderColorPicker();
+  showOnly('settingsScreen');
+}
+
+function renderSettingsChannels() {
+  const el = $('settingsChannelList');
+  el.innerHTML = '';
+  if (cfg.channels.length === 0) {
+    el.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No channels added yet</p>';
+    return;
+  }
+  cfg.channels.forEach((ch, i) => {
+    const row = document.createElement('div');
+    row.className = 's-row';
+    row.innerHTML = `
+      <span class="label">${ch.emoji} ${ch.name}</span>
+      <button class="btn btn-danger" data-i="${i}">Remove</button>
+    `;
+    row.querySelector('button').onclick = () => {
+      cfg.channels.splice(i, 1);
+      renderSettingsChannels();
+    };
+    el.appendChild(row);
+  });
+}
+
+function renderColorPicker() {
+  const el = $('colorPicker');
+  el.innerHTML = '';
+  COLORS.forEach(c => {
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch' + (c === selectedColor ? ' selected' : '');
+    sw.style.background = c;
+    sw.onclick = () => { selectedColor = c; renderColorPicker(); };
+    el.appendChild(sw);
+  });
+}
+
+$('addChannelBtn').onclick = () => {
+  const name = $('addName').value.trim();
+  let id = $('addId').value.trim();
+  const emoji = $('addEmoji').value.trim() || '📺';
+  if (!name || !id) return alert('Name and Channel ID are required');
+
+  // Try to extract channel ID from URL patterns
+  let match = id.match(/channel\/(UC[\w-]+)/);
+  if (match) id = match[1];
+  if (!id.startsWith('UC')) {
+    alert('Channel ID should start with "UC". You can find it in the channel URL.');
+    return;
+  }
+
+  cfg.channels.push({ name, id, emoji, color: selectedColor });
+  renderSettingsChannels();
+  $('addName').value = '';
+  $('addId').value = '';
+  $('addEmoji').value = '';
+};
+
+$('saveBtn').onclick = () => {
+  const t = parseInt($('setTimer').value);
+  const p = $('setPin').value;
+  if (isNaN(t) || t < 5) return alert('Timer must be at least 5 seconds');
+  if (!/^\d{4}$/.test(p)) return alert('PIN must be exactly 4 digits');
+  cfg.timerSeconds = t;
+  cfg.pin = p;
+  saveConfig(cfg);
+  showOnly('channelScreen');
+  renderChannels();
+  resetTimerUI();
+};
+
+$('cancelBtn').onclick = () => {
+  cfg = loadConfig();
+  showOnly('channelScreen');
+  renderChannels();
+  resetTimerUI();
+};
+
+// =============================================
+// YOUTUBE IFRAME API
+// =============================================
+const tag = document.createElement('script');
+tag.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(tag);
+
+window.onYouTubeIframeAPIReady = () => { ytReady = true; };
+
+// =============================================
+// INIT
+// =============================================
+buildPinPad();
+renderChannels();
+resetTimerUI();
+</script>
+</body>
+</html>
