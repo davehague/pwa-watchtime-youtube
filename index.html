@@ -970,7 +970,13 @@ $('qtSave').onclick = async () => {
   cfg.timerSeconds = qtMinutes * 60;
   await saveConfig(cfg);
   $('quickTimerOverlay').classList.add('hidden');
-  if (!timer.running) resetTimerUI();
+  if (timer.running) {
+    timer.total = cfg.timerSeconds;
+    timer.remaining = cfg.timerSeconds;
+    updateTimerUI();
+  } else {
+    resetTimerUI();
+  }
 };
 
 $('quickTimerBtn').onclick = () => {
