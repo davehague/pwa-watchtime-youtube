@@ -4,39 +4,57 @@ Kid-friendly YouTube session timer for Amazon Fire 7 tablet. Parent-controlled c
 
 ## How it works
 
-- **Parent mode** (PIN protected, default: `1234`): configure YouTube channels and session duration
-- **Kid mode**: tap a channel card, browse the 10 most recent videos, tap to watch via YouTube embed
+- **Parent mode** (PIN protected, default: `1234`): configure YouTube channels, session duration, and PIN
+- **Kid mode**: tap a channel card (shows profile picture), browse recent videos, tap to watch via YouTube embed
 - **Session timer**: starts when a channel is tapped, counts down through browsing AND watching
+- **Up Next**: when a video ends, suggests more from the current channel plus picks from other channels
+- **Shorts filtered**: YouTube Shorts are automatically excluded from video lists
 - **Time's up**: video pauses, fullscreen lock overlay until parent enters PIN
 
 ## Architecture
 
-Single `index.html` — no framework, no build step, no dependencies beyond the YouTube IFrame Player API.
+Single `index.html` — all HTML/CSS/JS inline. No framework, no build step.
 
-One Vercel serverless function at `/api/yt-feed/[channelId].js` proxies YouTube's Atom RSS feed to avoid CORS issues. Responses cached 5 minutes at the edge.
+Vercel serverless functions handle backend work:
 
-Config (channels, timer, PIN) stored in `localStorage` — per-device, nothing server-side.
+| Endpoint | Purpose |
+|---|---|
+| `/api/config` | GET/POST app config (stored in Upstash Redis) |
+| `/api/yt-feed/[channelId]` | Fetches YouTube RSS feed, filters out Shorts, returns JSON |
+| `/api/resolve-channel` | Resolves `@handles` and channel URLs to channel IDs + avatar URLs |
+| `/api/avatar/[channelId]` | Proxies channel profile images (avoids Google CDN rate limits) |
+
+Config (channels, timer, PIN) stored in **Upstash Redis** with localStorage as offline fallback.
+
+Installable as a **PWA** via service worker and manifest.
 
 ## Deployment
 
 Hosted on Vercel: https://pwa-watchtime-youtube.vercel.app
 
-Deploys automatically from `main` via `vercel --prod`. No build command needed.
+```bash
+vercel --prod
+```
+
+### Required setup
+
+1. Link an **Upstash for Redis** store to the project in the Vercel dashboard (prefix: `KV`)
+2. This provides `KV_REST_API_URL` and `KV_REST_API_TOKEN` env vars automatically
 
 ## Development
 
 ```bash
-vercel dev
+vercel env pull    # pulls Upstash credentials to .env.local
+vercel dev         # serves at http://localhost:3000
 ```
 
-Opens at `http://localhost:3000`. The API route works locally too.
+## Adding channels
 
-## Default channels
+In settings (gear icon, PIN required), paste any of these formats:
 
-| Channel | ID |
-|---|---|
-| Ms Rachel | `UCG2CL6EUjG8TVT1Tpl9nJdg` |
-| Bluey | `UCVzLLZkDuFGAE2BGdBuBNBg` |
-| Cocomelon | `UCbCmjCuTUZos6Inko4u57UQ` |
+- `https://www.youtube.com/@ChannelName`
+- `@ChannelName`
+- `https://www.youtube.com/channel/UCxxxxxxx`
+- `UCxxxxxxx`
 
-Parents can add/remove channels in settings (gear icon, PIN required).
+The app resolves `@handles` to channel IDs automatically and fetches the channel's profile picture.

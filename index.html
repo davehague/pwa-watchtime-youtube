@@ -399,6 +399,12 @@
   </div>
 </div>
 
+<!-- SCREEN: Up Next -->
+<div class="screen hidden" id="upNextScreen">
+  <div style="padding:8px 12px;font-size:18px;font-weight:700;">Up Next</div>
+  <div class="video-grid" id="upNextGrid"></div>
+</div>
+
 <!-- OVERLAY: Time's Up -->
 <div class="overlay times-up hidden" id="timesUpOverlay">
   <div class="stars">⭐ 🌟 ⭐ 🌟 ⭐</div>
@@ -506,6 +512,9 @@ let pinState = { buffer: '', callback: null };
 let selectedColor = COLORS[0];
 let ytPlayer = null;
 let ytReady = false;
+let currentChannel = null;
+let currentVideoId = null;
+let videoCache = {}; // channelId -> [videos]
 
 // =============================================
 // DOM refs
@@ -565,11 +574,11 @@ function resetTimerUI() {
 // SCREENS
 // =============================================
 function showOnly(screenId) {
-  ['channelScreen','videoListScreen','playerScreen','settingsScreen'].forEach(id => {
+  ['channelScreen','videoListScreen','playerScreen','upNextScreen','settingsScreen'].forEach(id => {
     $(id).classList.toggle('hidden', id !== screenId);
   });
   $('timerBar').classList.toggle('hidden', screenId === 'settingsScreen');
-  $('backBtn').style.display = (screenId === 'videoListScreen' || screenId === 'playerScreen') ? 'inline-flex' : 'none';
+  $('backBtn').style.display = (screenId === 'videoListScreen' || screenId === 'playerScreen' || screenId === 'upNextScreen') ? 'inline-flex' : 'none';
   $('timerLabel').textContent = screenId === 'channelScreen' ? 'Session Time' : 
     timer.running ? 'Time Left' : 'Session Time';
 }
@@ -600,11 +609,13 @@ function renderChannels() {
 // =============================================
 async function selectChannel(ch) {
   if (!timer.running) startSession();
+  currentChannel = ch;
   showOnly('videoListScreen');
   $('videoListHeader').innerHTML = `${ch.emoji} <span>${ch.name}</span>`;
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading videos...</div>`;
 
   const videos = await fetchVideos(ch.id);
+  videoCache[ch.id] = videos;
 
   if (timer.remaining <= 0) return; // session ended while loading
 
@@ -628,33 +639,16 @@ async function selectChannel(ch) {
 
 async function fetchVideos(channelId) {
   try {
-    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(8000) });
+    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
-    const text = await resp.text();
-    return parseAtomFeed(text);
+    const videos = await resp.json();
+    return videos.map(v => ({
+      ...v,
+      thumb: `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`
+    }));
   } catch(e) {
     return [];
   }
-}
-
-function parseAtomFeed(xml) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, 'text/xml');
-  const entries = doc.querySelectorAll('entry');
-  const videos = [];
-  entries.forEach(entry => {
-    const videoId = entry.querySelector('videoId')?.textContent ||
-                    entry.querySelector('id')?.textContent?.split(':').pop() || '';
-    const title = entry.querySelector('title')?.textContent || 'Untitled';
-    if (videoId) {
-      videos.push({
-        videoId,
-        title,
-        thumb: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
-      });
-    }
-  });
-  return videos;
 }
 
 function escHtml(str) {
@@ -668,6 +662,7 @@ function escHtml(str) {
 // =============================================
 function playVideo(videoId) {
   if (timer.remaining <= 0) return;
+  currentVideoId = videoId;
   showOnly('playerScreen');
 
   // Destroy existing player
@@ -704,7 +699,75 @@ function createPlayer(videoId) {
     },
     events: {
       onReady: e => e.target.playVideo(),
+      onStateChange: e => {
+        if (e.data === YT.PlayerState.ENDED && timer.remaining > 0) {
+          showUpNext();
+        }
+      },
     }
+  });
+}
+
+// =============================================
+// UP NEXT
+// =============================================
+async function showUpNext() {
+  destroyPlayer();
+  showOnly('upNextScreen');
+  const grid = $('upNextGrid');
+  grid.innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Finding more videos...</div>`;
+
+  // Gather videos from current channel (cached)
+  let currentVids = (videoCache[currentChannel?.id] || [])
+    .filter(v => v.videoId !== currentVideoId);
+
+  // Fetch videos from other channels in background
+  const otherChannels = cfg.channels.filter(ch => ch.id !== currentChannel?.id);
+  const fetchPromises = otherChannels.map(async ch => {
+    if (videoCache[ch.id]) return;
+    try {
+      videoCache[ch.id] = await fetchVideos(ch.id);
+    } catch(e) {}
+  });
+  await Promise.all(fetchPromises);
+
+  // Pick a few from other channels (2 per channel, shuffled)
+  let otherVids = [];
+  otherChannels.forEach(ch => {
+    const vids = (videoCache[ch.id] || []).slice();
+    for (let i = vids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [vids[i], vids[j]] = [vids[j], vids[i]];
+    }
+    otherVids.push(...vids.slice(0, 2).map(v => ({ ...v, channelName: ch.name, channelId: ch.id })));
+  });
+
+  // Build final list: up to 6 from current channel, then other channel picks
+  const suggestions = [
+    ...currentVids.slice(0, 6).map(v => ({ ...v, channelName: currentChannel.name, channelId: currentChannel.id })),
+    ...otherVids,
+  ];
+
+  if (suggestions.length === 0) {
+    grid.innerHTML = `<div class="video-loading">No more videos found.</div>`;
+    return;
+  }
+
+  grid.innerHTML = '';
+  suggestions.forEach(v => {
+    const card = document.createElement('div');
+    card.className = 'video-card';
+    const chLabel = v.channelId !== currentChannel?.id
+      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>` : '';
+    card.innerHTML = `
+      <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
+      <div class="info">
+        <div class="title">${escHtml(v.title)}</div>
+        ${chLabel}
+      </div>
+    `;
+    card.onclick = () => playVideo(v.videoId);
+    grid.appendChild(card);
   });
 }
 
@@ -758,9 +821,12 @@ function destroyPlayer() {
 // =============================================
 $('backBtn').onclick = () => {
   const current = !$('playerScreen').classList.contains('hidden') ? 'player' :
+                  !$('upNextScreen').classList.contains('hidden') ? 'upNext' :
                   !$('videoListScreen').classList.contains('hidden') ? 'videoList' : null;
   if (current === 'player') {
     destroyPlayer();
+    showOnly('videoListScreen');
+  } else if (current === 'upNext') {
     showOnly('videoListScreen');
   } else if (current === 'videoList') {
     // Going back to channels does NOT stop the timer — session is still running

@@ -4,38 +4,63 @@
 
 Single-file HTML app (`index.html`) that acts as a kid-friendly YouTube session timer. Designed for Amazon Fire 7 tablet running in Amazon Kids browser with a whitelisted URL.
 
+## Tech stack
+
+- **Frontend**: Single `index.html` file — all HTML/CSS/JS inline. No framework, no build step.
+- **Backend**: Vercel serverless functions (Node.js, ESM) in the `api/` directory.
+- **Storage**: Upstash Redis (via `@upstash/redis`) for server-side config persistence. localStorage as offline fallback cache.
+- **Dependencies**: Only `@upstash/redis` in `package.json`. The `package.json` exists solely for this dependency — there is no build step.
+- **PWA**: Service worker (`sw.js`) + `manifest.json` for installability. Beware: the SW caches `index.html` aggressively — users may need hard refresh after deploys.
+
 ## Key design decisions
 
-- **Single file**: All HTML/CSS/JS lives in `index.html`. No framework, no build step, no npm. Keep it this way.
+- **Single file**: All HTML/CSS/JS lives in `index.html`. No framework, no build step. Keep it this way.
 - **Timer is session-based**: Starts when a channel card is tapped, runs continuously through browsing and video watching. NOT per-video.
 - **Timer units**: Currently in seconds for testing (default 30s). Will switch to minutes later — the settings label mentions this.
-- **PIN protection**: 4-digit PIN guards settings and the "time's up" unlock. Default: `1234`.
-- **localStorage only**: All config is per-device. No server-side state, no auth, no database.
+- **PIN protection**: 4-digit PIN guards settings and the "time's up" unlock. Default: `1234`. PIN is UI-only — API endpoints are unauthenticated.
+- **Config in Upstash Redis**: All config (channels, timer, PIN) stored server-side in Upstash Redis under the key `"config"`. On load, app fetches from `/api/config`; on save, POSTs back. Falls back to localStorage if API is unreachable.
+- **Channel avatars**: Proxied through `/api/avatar/[channelId]` to avoid 429 rate limits from hotlinking Google CDN. Cached at the edge for 24 hours.
+- **Shorts filtering**: The `/api/yt-feed/[channelId]` endpoint checks each video against YouTube's `/shorts/` URL — if it returns 200 (not redirect), it's a Short and gets filtered out.
+- **Up Next**: When a video ends, shows suggestions from the current channel plus a few random picks from other configured channels.
 
 ## File structure
 
 ```
-index.html                    # The entire app
-api/yt-feed/[channelId].js    # Vercel serverless function — proxies YouTube RSS to avoid CORS
+index.html                       # The entire app (HTML/CSS/JS)
+manifest.json                    # PWA manifest
+sw.js                            # Service worker for PWA
+package.json                     # Only dependency: @upstash/redis
+api/
+  config.js                      # GET/POST app config (Upstash Redis)
+  yt-feed/[channelId].js         # Proxies YouTube RSS, filters Shorts, returns JSON
+  resolve-channel.js             # Resolves @handles and channel IDs → { channelId, avatar }
+  avatar/[channelId].js          # Proxies channel profile images from Google CDN
+docs/plans/                      # Design documents
 ```
 
 ## Vercel deployment
 
-- Hosted at: https://pwa-watchtime-youtube.vercel.app
-- Deploy: `vercel --prod` from project root
-- Local dev: `vercel dev` (serves both static files and API routes)
-- The API route fetches `https://www.youtube.com/feeds/videos.xml?channel_id=XXX` server-side and returns XML with 5-minute edge cache
+- **Hosted at**: https://pwa-watchtime-youtube.vercel.app
+- **Deploy**: `vercel --prod` from project root
+- **Local dev**: `vercel dev` (serves static files + API routes with env vars from `.env.local`)
+- **Pull env vars**: `vercel env pull` to get `.env.local` with Upstash credentials
+- **Required env vars** (set automatically when Upstash is linked to the project):
+  - `KV_REST_API_URL` — Upstash Redis REST endpoint
+  - `KV_REST_API_TOKEN` — Upstash Redis auth token
 
 ## Things to watch out for
 
 - YouTube IFrame Player API is loaded from `https://www.youtube.com/iframe_api` — no local copy
-- The `fetchVideos()` function in index.html calls `/api/yt-feed/${channelId}` — this is the Vercel serverless function, not an external API
+- The `fetchVideos()` function in index.html calls `/api/yt-feed/${channelId}` — returns JSON (not XML) with Shorts already filtered out
 - Channel IDs must start with `UC` — the settings UI validates this
+- Adding channels supports `@handle` URLs, full channel URLs, or raw channel IDs — the `/api/resolve-channel` endpoint resolves them
+- The YouTube channel page uses either `"channelId"` or `"externalId"` for the channel ID — the resolver checks both
 - The app uses `touch-action: manipulation` and `-webkit-tap-highlight-color: transparent` for tablet UX — don't remove these
+- The yt-feed endpoint makes HEAD requests to YouTube `/shorts/<id>` for each video to filter Shorts — this adds latency (~2-4s). Client timeout is 15s.
 
 ## What NOT to do
 
-- Don't add npm, package.json, or a build step
 - Don't split index.html into multiple files
 - Don't change the timer from session-based to per-video
-- Don't add authentication or server-side user state
+- Don't add authentication on API endpoints (PIN is UI-only by design)
+- Don't hotlink `yt3.googleusercontent.com` directly — use the `/api/avatar/` proxy to avoid 429s
