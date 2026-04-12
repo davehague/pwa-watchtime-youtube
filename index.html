@@ -735,9 +735,9 @@ function renderChannels() {
     const card = document.createElement('div');
     card.className = 'channel-card';
     card.style.background = ch.color;
-    const icon = ch.id.startsWith('PL')
-      ? `<div class="emoji">${ch.emoji}</div>`
-      : `<img class="avatar" src="/api/avatar/${ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`;
+    const icon = ch.avatar
+      ? `<img class="avatar" src="${ch.id.startsWith('PL') ? ch.avatar : '/api/avatar/' + ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`
+      : `<div class="emoji">${ch.emoji}</div>`;
     card.innerHTML = `${icon}<div class="name">${ch.name}</div>`;
     card.onclick = () => selectChannel(ch);
     grid.appendChild(card);
@@ -1164,9 +1164,18 @@ $('addChannelBtn').onclick = async () => {
   const plMatch = id.match(/[?&]list=(PL[\w-]+)/) || id.match(/^(PL[\w-]+)$/);
   if (plMatch) {
     id = plMatch[1];
+    // Fetch playlist thumbnail
+    let plThumb = null;
+    try {
+      const resp = await fetch(`/api/playlist-info?playlistId=${id}`, { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        plThumb = data.thumbnail;
+      }
+    } catch(e) {}
     btn.textContent = '+ Add Channel';
     btn.disabled = false;
-    cfg.channels.push({ name, id, emoji: '🎵', color: selectedColor, avatar: null });
+    cfg.channels.push({ name, id, emoji: '🎵', color: selectedColor, avatar: plThumb });
     renderSettingsChannels();
     $('addName').value = '';
     $('addId').value = '';
