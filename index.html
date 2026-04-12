@@ -280,15 +280,14 @@
 
   /* ---- PLAYER ---- */
   .player-container { padding-top: 52px; height: 100vh; }
-  .player-wrapper { width: 100%; height: calc(100vh - 52px); background: #000; }
-  .player-wrapper iframe { width: 100%; height: 100%; border: none; }
+  .player-wrapper { width: 100%; height: calc(100vh - 52px); background: #000; position: relative; }
+  .player-wrapper iframe { width: 100%; height: 100%; border: none; position: relative; z-index: 1; }
   .player-shield {
     position: absolute;
-    inset: 0;
-    z-index: 10;
-    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 20;
+    background: transparent;
   }
-  .player-wrapper { position: relative; }
   body.rotated .player-container { height: 100vw; }
   body.rotated .player-wrapper { height: calc(100vw - 52px); }
 
@@ -765,7 +764,7 @@ function playVideo(videoId) {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
   }
-  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div>';
+  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
 
   if (ytReady) {
     createPlayer(videoId);
