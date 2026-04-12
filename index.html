@@ -39,7 +39,7 @@
   /* ---- TIMER BAR ---- */
   .timer-bar {
     position: fixed;
-    top: 0; left: 0; right: 0;
+    top: env(safe-area-inset-top, 0px); left: 0; right: 0;
     height: 52px;
     background: var(--surface);
     display: flex;
@@ -181,12 +181,12 @@
   .back-btn:active { transform: scale(0.9); }
 
   /* ---- SCREENS ---- */
-  .screen { padding-top: 62px; min-height: 100vh; overflow-y: auto; max-height: 100vh; }
+  .screen { padding-top: calc(62px + env(safe-area-inset-top, 0px)); min-height: 100vh; overflow-y: auto; max-height: 100vh; }
 
   /* ---- SPLIT VIEW (feeds left, videos right) ---- */
   .split-view {
     display: flex;
-    padding-top: 54px;
+    padding-top: calc(54px + env(safe-area-inset-top, 0px));
     height: 100vh;
   }
   .feed-sidebar {
@@ -303,8 +303,8 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ---- PLAYER ---- */
-  .player-container { padding-top: 52px; height: 100vh; }
-  .player-wrapper { width: 100%; height: calc(100vh - 52px); background: #000; position: relative; }
+  .player-container { padding-top: calc(52px + env(safe-area-inset-top, 0px)); height: 100vh; }
+  .player-wrapper { width: 100%; height: calc(100vh - 52px - env(safe-area-inset-top, 0px)); background: #000; position: relative; }
   .player-wrapper iframe { width: 100%; height: 100%; border: none; position: relative; z-index: 1; }
   .player-shield {
     position: absolute;
