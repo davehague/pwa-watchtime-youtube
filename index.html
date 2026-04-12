@@ -1157,13 +1157,37 @@ function renderSettingsChannels() {
       sw.onclick = () => { ch.color = c; renderSettingsChannels(); };
       colors.appendChild(sw);
     });
+    // ID row
+    const idRow = document.createElement('div');
+    idRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;margin-left:40px;';
+    const idLabel = ch.id.startsWith('PL') ? 'Playlist' : 'Channel';
+    const idUrl = ch.id.startsWith('PL')
+      ? `https://www.youtube.com/playlist?list=${ch.id}`
+      : `https://www.youtube.com/channel/${ch.id}`;
+    idRow.innerHTML = `
+      <span style="color:var(--text-muted);font-size:12px;flex-shrink:0;">${idLabel}:</span>
+      <input type="text" value="${escHtml(idUrl)}" style="flex:1;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);font-size:12px;" data-field="id" data-i="${i}">
+    `;
     row.appendChild(header);
+    row.appendChild(idRow);
     row.appendChild(colors);
     // Wire up name editing
     header.querySelector('input').onchange = function() {
       const v = this.value.trim();
       if (v) ch.name = v;
       else this.value = ch.name;
+    };
+    // Wire up ID editing
+    idRow.querySelector('input').onchange = function() {
+      let v = this.value.trim();
+      // Extract playlist ID
+      const plM = v.match(/[?&]list=(PL[\w-]+)/) || v.match(/^(PL[\w-]+)$/);
+      if (plM) { ch.id = plM[1]; renderSettingsChannels(); return; }
+      // Extract channel ID
+      const chM = v.match(/channel\/(UC[\w-]+)/) || v.match(/^(UC[\w-]+)$/);
+      if (chM) { ch.id = chM[1]; renderSettingsChannels(); return; }
+      // Invalid — revert
+      this.value = idUrl;
     };
     header.querySelector('button').onclick = () => {
       cfg.channels.splice(i, 1);
