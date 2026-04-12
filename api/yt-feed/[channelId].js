@@ -1,11 +1,12 @@
 export default async function handler(req, res) {
   const { channelId } = req.query;
 
-  if (!channelId || !channelId.startsWith('UC')) {
-    return res.status(400).send('Invalid channel ID');
+  if (!channelId || (!channelId.startsWith('UC') && !channelId.startsWith('PL'))) {
+    return res.status(400).send('Invalid channel or playlist ID');
   }
 
-  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  const param = channelId.startsWith('PL') ? 'playlist_id' : 'channel_id';
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?${param}=${channelId}`;
 
   try {
     const response = await fetch(feedUrl, { signal: AbortSignal.timeout(8000) });

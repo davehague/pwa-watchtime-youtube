@@ -559,8 +559,8 @@
     <hr style="border-color:var(--border); margin:10px 0">
     <h3>Add Channel</h3>
     <input type="text" id="addName" placeholder="Display name (e.g. Ms Rachel)">
-    <input type="text" id="addId" placeholder="Channel URL, @handle, or ID">
-    <div class="s-hint">Paste a URL like youtube.com/@Name or youtube.com/channel/UCxxxxx</div>
+    <input type="text" id="addId" placeholder="Channel URL, @handle, ID, or playlist URL">
+    <div class="s-hint">Paste a channel URL, @handle, channel ID, or playlist URL</div>
     <div class="color-picker" id="colorPicker"></div>
     <button class="btn btn-primary" id="addChannelBtn">+ Add Channel</button>
   </div>
@@ -735,7 +735,9 @@ function renderChannels() {
     const card = document.createElement('div');
     card.className = 'channel-card';
     card.style.background = ch.color;
-    const icon = `<img class="avatar" src="/api/avatar/${ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`;
+    const icon = ch.id.startsWith('PL')
+      ? `<div class="emoji">${ch.emoji}</div>`
+      : `<img class="avatar" src="/api/avatar/${ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`;
     card.innerHTML = `${icon}<div class="name">${ch.name}</div>`;
     card.onclick = () => selectChannel(ch);
     grid.appendChild(card);
@@ -1158,6 +1160,19 @@ $('addChannelBtn').onclick = async () => {
   btn.disabled = true;
   let avatar = null;
 
+  // Try to extract playlist ID from URL
+  const plMatch = id.match(/[?&]list=(PL[\w-]+)/) || id.match(/^(PL[\w-]+)$/);
+  if (plMatch) {
+    id = plMatch[1];
+    btn.textContent = '+ Add Channel';
+    btn.disabled = false;
+    cfg.channels.push({ name, id, emoji: '🎵', color: selectedColor, avatar: null });
+    renderSettingsChannels();
+    $('addName').value = '';
+    $('addId').value = '';
+    return;
+  }
+
   // Try to extract channel ID from URL patterns
   let match = id.match(/channel\/(UC[\w-]+)/);
   if (match) id = match[1];
@@ -1186,7 +1201,7 @@ $('addChannelBtn').onclick = async () => {
   if (!id.startsWith('UC')) {
     btn.textContent = '+ Add Channel';
     btn.disabled = false;
-    alert('Channel ID should start with "UC". You can paste a channel URL, @handle, or ID.');
+    alert('Channel ID should start with "UC". You can paste a channel URL, @handle, playlist URL, or ID.');
     return;
   }
 
