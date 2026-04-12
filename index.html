@@ -99,6 +99,7 @@
     left: 100%;
   }
   body.rotated .screen { min-height: 100vw; }
+  body.rotated .split-view { height: 100vw; }
   .timer-right { display: flex; align-items: center; gap: 8px; }
   .settings-btn, .quick-timer-btn {
     background: var(--surface-2);
@@ -182,28 +183,25 @@
   /* ---- SCREENS ---- */
   .screen { padding-top: 62px; min-height: 100vh; overflow-y: auto; max-height: 100vh; }
 
-  /* ---- CHANNEL SELECT ---- */
-  .channel-header {
-    text-align: center;
-    padding: 12px 16px 4px;
-    font-size: 20px;
-    font-weight: 700;
+  /* ---- SPLIT VIEW (feeds left, videos right) ---- */
+  .split-view {
+    display: flex;
+    padding-top: 54px;
+    height: 100vh;
   }
-  .channel-sub {
-    text-align: center;
-    font-size: 13px;
-    color: var(--text-muted);
-    margin-bottom: 12px;
+  .feed-sidebar {
+    width: 140px;
+    min-width: 140px;
+    overflow-y: auto;
+    border-right: 2px solid var(--border);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  .channel-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    padding: 0 12px 24px;
-  }
-  .channel-card {
-    border-radius: 16px;
-    padding: 20px 12px;
+  .feed-card {
+    border-radius: 12px;
+    padding: 8px 6px;
     text-align: center;
     cursor: pointer;
     transition: transform 0.12s;
@@ -211,61 +209,38 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    min-height: 110px;
+    gap: 4px;
+    min-height: 80px;
     position: relative;
     overflow: hidden;
   }
-  .channel-card::before {
+  .feed-card::before {
     content: '';
     position: absolute;
     inset: 0;
     background: inherit;
-    filter: brightness(0.75);
+    filter: brightness(0.65);
     z-index: 0;
   }
-  .channel-card > * { position: relative; z-index: 1; }
-  .channel-card:active { transform: scale(0.93); }
-  .channel-card .emoji { font-size: 44px; }
-  .channel-card .avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: rgba(255,255,255,0.1); }
-  .channel-card .name { font-size: 16px; font-weight: 700; }
+  .feed-card > * { position: relative; z-index: 1; }
+  .feed-card:active { transform: scale(0.93); }
+  .feed-card.selected { outline: 3px solid #fff; outline-offset: -3px; }
+  .feed-card .emoji { font-size: 28px; }
+  .feed-card .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: rgba(255,255,255,0.1); }
+  .feed-card .name { font-size: 11px; font-weight: 700; line-height: 1.2; }
 
-  /* ---- VIDEO LIST ---- */
-  .video-list-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    font-size: 16px;
-    font-weight: 600;
+  .video-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
   }
-  .shuffle-btn {
-    margin-left: auto;
-    background: var(--green);
-    border: none;
-    color: #fff;
-    height: 38px;
-    padding: 0 14px;
-    border-radius: 19px;
-    font-size: 18px;
-    font-weight: 700;
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-  }
-  .shuffle-btn:active { transform: scale(0.9); }
-  .shuffle-btn.spinning .shuffle-icon { animation: spin 0.5s ease; }
-  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .video-grid {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 0 12px 24px;
-    overflow-y: auto;
-    max-height: calc(100vh - 120px);
+    padding: 0 0 24px;
   }
+
   .video-card {
     display: flex;
     gap: 10px;
@@ -496,20 +471,12 @@
   <div class="timer-progress" id="timerProgress" style="width:100%"></div>
 </div>
 
-<!-- SCREEN: Channel Select -->
-<div class="screen" id="channelScreen">
-  <div class="channel-header">What do you want to watch?</div>
-  <div class="channel-sub">Pick a channel to start your session</div>
-  <div class="channel-grid" id="channelGrid"></div>
-</div>
-
-<!-- SCREEN: Video List -->
-<div class="screen hidden" id="videoListScreen">
-  <div class="video-list-header">
-    <span id="videoListHeader"></span>
-    <button class="shuffle-btn" id="shuffleBtn"><span class="shuffle-icon">🔀</span> More!</button>
+<!-- SCREEN: Split View (feeds + videos) -->
+<div class="split-view" id="browseScreen">
+  <div class="feed-sidebar" id="feedSidebar"></div>
+  <div class="video-panel" id="videoPanel">
+    <div class="video-grid" id="videoGrid"></div>
   </div>
-  <div class="video-grid" id="videoGrid"></div>
 </div>
 
 <!-- SCREEN: Player -->
@@ -567,7 +534,7 @@
   <div class="s-group">
     <h3>Session Timer (seconds — switch to minutes later)</h3>
     <input type="number" id="setTimer" min="5" max="7200" inputmode="numeric">
-    <div class="s-hint">Starts when a channel is tapped. Counts down during browsing and watching.</div>
+    <div class="s-hint">Starts when a video is tapped. Counts down during browsing and watching.</div>
   </div>
 
   <div class="s-group">
@@ -731,86 +698,145 @@ function resetTimerUI() {
 // SCREENS
 // =============================================
 function showOnly(screenId) {
-  ['channelScreen','videoListScreen','playerScreen','upNextScreen','settingsScreen'].forEach(id => {
+  ['browseScreen','playerScreen','upNextScreen','settingsScreen'].forEach(id => {
     $(id).classList.toggle('hidden', id !== screenId);
   });
   $('timerBar').classList.toggle('hidden', screenId === 'settingsScreen');
-  const showNav = screenId === 'videoListScreen' || screenId === 'playerScreen' || screenId === 'upNextScreen';
+  const showNav = screenId === 'playerScreen' || screenId === 'upNextScreen';
   $('backBtn').style.display = showNav ? 'inline-flex' : 'none';
   const isSilk = /\bSilk\b/i.test(navigator.userAgent);
   $('rotateBtn').style.display = (showNav && !isSilk) ? 'inline-flex' : 'none';
-  $('timerLabel').textContent = screenId === 'channelScreen' ? 'Session Time' : 
-    timer.running ? 'Time Left' : 'Session Time';
+  $('timerLabel').textContent = timer.running ? 'Time Left' : 'Session Time';
 }
 
 // =============================================
-// CHANNEL SELECT
+// SIDEBAR + VIDEO PANEL (split view)
 // =============================================
-function renderChannels() {
-  const grid = $('channelGrid');
-  grid.innerHTML = '';
-  if (cfg.channels.length === 0) {
-    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px 0;">No channels yet.<br>Tap ⚙ to add some!</p>';
-    return;
-  }
+let selectedFeed = 'all'; // 'all' or channel index
+let allVideosLoaded = false;
+let roundRobinIndex = 0; // how many rounds rendered so far
+const VIDEOS_PER_BATCH = 10;
+
+function renderSidebar() {
+  const sidebar = $('feedSidebar');
+  sidebar.innerHTML = '';
+  // "All" card
+  const allCard = document.createElement('div');
+  allCard.className = 'feed-card' + (selectedFeed === 'all' ? ' selected' : '');
+  allCard.style.background = 'linear-gradient(135deg, #FF0000, #FF8800, #FFEE00, #00FF44, #00AAFF, #8800FF)';
+  allCard.innerHTML = `<div class="emoji">🌈</div><div class="name">All</div>`;
+  allCard.onclick = () => selectFeed('all');
+  sidebar.appendChild(allCard);
+
   cfg.channels.forEach((ch, i) => {
     const card = document.createElement('div');
-    card.className = 'channel-card';
+    card.className = 'feed-card' + (selectedFeed === i ? ' selected' : '');
     card.style.background = ch.color;
     const icon = ch.avatar
       ? `<img class="avatar" src="${ch.id.startsWith('PL') ? ch.avatar : '/api/avatar/' + ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`
       : `<div class="emoji">${ch.emoji}</div>`;
     card.innerHTML = `${icon}<div class="name">${ch.name}</div>`;
-    card.onclick = () => selectChannel(ch);
-    grid.appendChild(card);
+    card.onclick = () => selectFeed(i);
+    sidebar.appendChild(card);
   });
 }
 
-// =============================================
-// VIDEO LIST (via RSS → JSON proxy or fallback)
-// =============================================
-async function selectChannel(ch) {
-  if (!timer.running) startSession();
-  currentChannel = ch;
-  showOnly('videoListScreen');
-  $('videoListHeader').innerHTML = `${ch.emoji} <span>${ch.name}</span>`;
-  $('shuffleBtn').style.display = ch.id.startsWith('PL') ? 'inline-flex' : 'none';
-  await loadVideoList(ch, false);
-}
-
-async function loadVideoList(ch, bustCache = false) {
+async function selectFeed(feed) {
+  selectedFeed = feed;
+  renderSidebar();
+  roundRobinIndex = 0;
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading videos...</div>`;
 
-  const videos = await fetchVideos(ch.id, bustCache);
-  videoCache[ch.id] = videos;
+  if (feed === 'all') {
+    await loadAllFeeds();
+    renderRoundRobin();
+  } else {
+    const ch = cfg.channels[feed];
+    currentChannel = ch;
+    if (!videoCache[ch.id]) {
+      videoCache[ch.id] = await fetchVideos(ch.id);
+    }
+    renderSingleFeed(ch);
+  }
+}
 
-  if (timer.remaining <= 0) return;
+async function loadAllFeeds() {
+  if (allVideosLoaded) return;
+  await Promise.all(cfg.channels.map(async ch => {
+    if (!videoCache[ch.id]) {
+      videoCache[ch.id] = await fetchVideos(ch.id);
+    }
+  }));
+  allVideosLoaded = true;
+}
 
+function getRoundRobinVideos(upTo) {
+  const result = [];
+  const feeds = cfg.channels.map(ch => videoCache[ch.id] || []);
+  const maxLen = Math.max(...feeds.map(f => f.length), 0);
+  for (let row = 0; row < maxLen && result.length < upTo; row++) {
+    for (let col = 0; col < feeds.length && result.length < upTo; col++) {
+      if (feeds[col][row]) {
+        result.push(feeds[col][row]);
+      }
+    }
+  }
+  return result;
+}
+
+function renderRoundRobin() {
+  const count = (roundRobinIndex + 1) * VIDEOS_PER_BATCH;
+  const videos = getRoundRobinVideos(count);
+  $('videoGrid').innerHTML = '';
   if (videos.length === 0) {
-    $('videoGrid').innerHTML = `<div class="video-loading">Couldn't load videos.<br>Check the Channel ID in settings.</div>`;
+    $('videoGrid').innerHTML = `<div class="video-loading">No videos found.<br>Add channels in ⚙ settings.</div>`;
     return;
   }
+  videos.forEach(v => {
+    $('videoGrid').appendChild(makeVideoCard(v));
+  });
+  roundRobinIndex++;
+}
 
+function renderSingleFeed(ch) {
+  const videos = videoCache[ch.id] || [];
   $('videoGrid').innerHTML = '';
-  videos.slice(0, 20).forEach(v => {
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    card.innerHTML = `
-      <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
-      <div class="info"><div class="title">${escHtml(v.title)}</div></div>
-    `;
-    card.onclick = () => playVideo(v.videoId);
-    $('videoGrid').appendChild(card);
+  if (videos.length === 0) {
+    $('videoGrid').innerHTML = `<div class="video-loading">Couldn't load videos.<br>Check settings.</div>`;
+    return;
+  }
+  videos.forEach(v => {
+    $('videoGrid').appendChild(makeVideoCard(v));
   });
 }
 
-$('shuffleBtn').onclick = async () => {
-  if (!currentChannel) return;
-  const btn = $('shuffleBtn');
-  btn.classList.add('spinning');
-  setTimeout(() => btn.classList.remove('spinning'), 500);
-  await loadVideoList(currentChannel, true);
-};
+function makeVideoCard(v) {
+  const card = document.createElement('div');
+  card.className = 'video-card';
+  card.innerHTML = `
+    <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
+    <div class="info"><div class="title">${escHtml(v.title)}</div></div>
+  `;
+  card.onclick = () => {
+    if (!timer.running) startSession();
+    playVideo(v.videoId);
+  };
+  return card;
+}
+
+// Infinite scroll — load more when near bottom of video panel
+$('videoPanel').addEventListener('scroll', () => {
+  if (selectedFeed !== 'all') return;
+  const panel = $('videoPanel');
+  if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 200) {
+    const prevCount = $('videoGrid').children.length;
+    renderRoundRobin();
+    // If no new videos were added, we've exhausted all feeds
+  }
+});
+
+// Keep renderChannels as alias for settings exit
+function renderChannels() { renderSidebar(); selectFeed('all'); }
 
 async function fetchVideos(channelId, bustCache = false) {
   try {
@@ -952,7 +978,7 @@ async function showUpNext() {
 // =============================================
 function onTimesUp() {
   destroyPlayer();
-  showOnly('channelScreen');
+  showOnly('browseScreen');
   const overlay = $('timesUpOverlay');
   overlay.classList.remove('hidden');
   // Spawn confetti
@@ -977,7 +1003,7 @@ $('timesUpBtn').onclick = () => {
       overlay.querySelectorAll('.confetti').forEach(c => c.remove());
       overlay.classList.add('hidden');
       destroyPlayer();
-      showOnly('channelScreen');
+      showOnly('browseScreen');
       resetTimerUI();
     }
   });
@@ -1010,16 +1036,12 @@ $('playerWrapper').addEventListener('click', (e) => {
 // =============================================
 $('backBtn').onclick = () => {
   const current = !$('playerScreen').classList.contains('hidden') ? 'player' :
-                  !$('upNextScreen').classList.contains('hidden') ? 'upNext' :
-                  !$('videoListScreen').classList.contains('hidden') ? 'videoList' : null;
+                  !$('upNextScreen').classList.contains('hidden') ? 'upNext' : null;
   if (current === 'player') {
     destroyPlayer();
-    showOnly('videoListScreen');
+    showOnly('browseScreen');
   } else if (current === 'upNext') {
-    showOnly('videoListScreen');
-  } else if (current === 'videoList') {
-    // Going back to channels does NOT stop the timer — session is still running
-    showOnly('channelScreen');
+    showOnly('browseScreen');
   }
 };
 
@@ -1307,7 +1329,9 @@ $('saveBtn').onclick = async () => {
 };
 const exitSettings = async () => {
   cfg = await loadConfig();
-  showOnly('channelScreen');
+  allVideosLoaded = false;
+  videoCache = {};
+  showOnly('browseScreen');
   renderChannels();
   resetTimerUI();
 };
@@ -1327,9 +1351,15 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 // INIT
 // =============================================
 (async () => {
-  $('channelGrid').innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px 0;">Loading...</p>';
+  $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading...</div>`;
   cfg = await loadConfig();
-  renderChannels();
+  // Shuffle channel order each session for variety
+  for (let i = cfg.channels.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cfg.channels[i], cfg.channels[j]] = [cfg.channels[j], cfg.channels[i]];
+  }
+  renderSidebar();
+  selectFeed('all');
   resetTimerUI();
 })();
 
