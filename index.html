@@ -250,42 +250,29 @@
     100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
   }
 
-  /* ---- PIN PAD ---- */
+  /* ---- PIN INPUT ---- */
   .pin-overlay {
     background: rgba(0,0,0,0.92);
     z-index: 2000;
   }
   .pin-overlay h2 { font-size: 18px; font-weight: 600; color: var(--text-muted); }
-  .pin-dots { display: flex; gap: 14px; margin: 12px 0 20px; }
-  .pin-dot {
-    width: 18px; height: 18px;
-    border-radius: 50%;
-    border: 2px solid var(--green);
-    transition: background 0.15s;
-  }
-  .pin-dot.filled { background: var(--green); }
-  .pin-dot.error { border-color: var(--red); background: var(--red); }
-  .pin-pad {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    max-width: 260px;
-  }
-  .pin-key {
-    width: 68px; height: 68px;
-    border-radius: 50%;
+  .pin-input {
+    width: 160px;
+    padding: 14px;
+    border-radius: 12px;
     border: 2px solid var(--border);
     background: var(--surface);
     color: var(--text);
-    font-size: 26px;
-    font-weight: 600;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.1s;
+    font-size: 32px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 12px;
+    margin: 16px 0;
+    -webkit-text-security: disc;
   }
-  .pin-key:active { background: var(--surface-2); }
+  .pin-input:focus { border-color: var(--green); outline: none; }
+  .pin-input.error { border-color: var(--red); animation: shake 0.4s ease; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
   .pin-cancel {
     margin-top: 16px;
     background: none;
@@ -424,8 +411,7 @@
 <!-- OVERLAY: PIN -->
 <div class="overlay pin-overlay hidden" id="pinOverlay">
   <h2 id="pinTitle">Enter PIN</h2>
-  <div class="pin-dots" id="pinDots"></div>
-  <div class="pin-pad" id="pinPad"></div>
+  <input type="tel" class="pin-input" id="pinInput" maxlength="4" inputmode="numeric" pattern="\d{4}" autocomplete="off">
   <button class="pin-cancel" id="pinCancel">Cancel</button>
 </div>
 
@@ -760,68 +746,38 @@ $('backBtn').onclick = () => {
 };
 
 // =============================================
-// PIN PAD
+// PIN INPUT
 // =============================================
 function requestPin(callback) {
-  pinState = { buffer: '', callback };
-  renderPinDots();
+  pinState = { callback };
+  const input = $('pinInput');
+  input.value = '';
+  input.classList.remove('error');
   $('pinOverlay').classList.remove('hidden');
+  setTimeout(() => input.focus(), 100);
 }
 
-function renderPinDots(error) {
-  const el = $('pinDots');
-  el.innerHTML = '';
-  for (let i = 0; i < 4; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'pin-dot' + (i < pinState.buffer.length ? (error ? ' error' : ' filled') : '');
-    el.appendChild(dot);
-  }
-}
-
-function buildPinPad() {
-  const pad = $('pinPad');
-  [1,2,3,4,5,6,7,8,9,null,0,'⌫'].forEach(key => {
-    if (key === null) {
-      const spacer = document.createElement('div');
-      pad.appendChild(spacer);
-      return;
-    }
-    const btn = document.createElement('button');
-    btn.className = 'pin-key';
-    btn.textContent = key;
-    btn.onclick = () => onPinKey(key);
-    pad.appendChild(btn);
-  });
-}
-
-function onPinKey(key) {
-  if (key === '⌫') {
-    pinState.buffer = pinState.buffer.slice(0, -1);
-    renderPinDots();
-    return;
-  }
-  pinState.buffer += String(key);
-  renderPinDots();
-  if (pinState.buffer.length === 4) {
-    const ok = pinState.buffer === cfg.pin;
-    if (!ok) {
-      renderPinDots(true);
+$('pinInput').addEventListener('input', function() {
+  this.value = this.value.replace(/\D/g, '');
+  if (this.value.length === 4) {
+    if (this.value === cfg.pin) {
+      $('pinOverlay').classList.add('hidden');
+      pinState.callback?.(true);
+      pinState = { callback: null };
+    } else {
+      this.classList.add('error');
       setTimeout(() => {
-        pinState.buffer = '';
-        renderPinDots();
+        this.value = '';
+        this.classList.remove('error');
       }, 500);
-      return;
     }
-    $('pinOverlay').classList.add('hidden');
-    pinState.callback?.(true);
-    pinState = { buffer: '', callback: null };
   }
-}
+});
 
 $('pinCancel').onclick = () => {
   $('pinOverlay').classList.add('hidden');
   pinState.callback?.(false);
-  pinState = { buffer: '', callback: null };
+  pinState = { callback: null };
 };
 
 // =============================================
@@ -930,7 +886,6 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 // =============================================
 // INIT
 // =============================================
-buildPinPad();
 renderChannels();
 resetTimerUI();
 
