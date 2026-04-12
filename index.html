@@ -924,13 +924,14 @@ function createPlayer(videoId) {
     videoId: videoId,
     playerVars: {
       autoplay: 1,
+      mute: 1,
       modestbranding: 1,
       rel: 0,
       playsinline: 1,
       fs: 0,
     },
     events: {
-      onReady: e => { e.target.unMute(); e.target.setVolume(100); e.target.playVideo(); },
+      onReady: e => { e.target.playVideo(); setTimeout(() => { e.target.unMute(); e.target.setVolume(100); }, 500); },
       onStateChange: e => {
         if (e.data === YT.PlayerState.ENDED && timer.remaining > 0) {
           showUpNext();
