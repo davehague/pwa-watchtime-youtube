@@ -1170,6 +1170,9 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
+
+// Try to lock to landscape (works in installed PWA / fullscreen)
+try { screen.orientation.lock('landscape').catch(() => {}); } catch(e) {}
 </script>
 </body>
 </html>

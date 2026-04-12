@@ -4,7 +4,7 @@
   "description": "Kid-friendly YouTube session timer",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "any",
+  "orientation": "landscape",
   "background_color": "#0f0f1a",
   "theme_color": "#0f0f1a",
   "icons": [
