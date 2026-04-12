@@ -282,6 +282,13 @@
   .player-container { padding-top: 52px; height: 100vh; }
   .player-wrapper { width: 100%; height: calc(100vh - 52px); background: #000; }
   .player-wrapper iframe { width: 100%; height: 100%; border: none; }
+  .player-shield {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    cursor: pointer;
+  }
+  .player-wrapper { position: relative; }
   body.rotated .player-container { height: 100vw; }
   body.rotated .player-wrapper { height: calc(100vw - 52px); }
 
@@ -468,6 +475,7 @@
 <div class="player-container hidden" id="playerScreen">
   <div class="player-wrapper" id="playerWrapper">
     <div id="ytPlayer"></div>
+    <div class="player-shield" id="playerShield"></div>
   </div>
 </div>
 
@@ -899,8 +907,22 @@ function destroyPlayer() {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
   }
-  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div>';
+  $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield" id="playerShield"></div>';
 }
+
+// Tap shield to toggle play/pause
+$('playerWrapper').addEventListener('click', (e) => {
+  if (e.target.classList.contains('player-shield') && ytPlayer) {
+    try {
+      const state = ytPlayer.getPlayerState();
+      if (state === YT.PlayerState.PLAYING) {
+        ytPlayer.pauseVideo();
+      } else {
+        ytPlayer.playVideo();
+      }
+    } catch(e) {}
+  }
+});
 
 // =============================================
 // BACK BUTTON
