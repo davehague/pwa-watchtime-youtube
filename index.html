@@ -713,6 +713,8 @@ function resetTimerUI() {
 // SCREENS
 // =============================================
 function showOnly(screenId) {
+  // Clear rotation when going back to browse (no rotate button there)
+  if (screenId === 'browseScreen') document.body.classList.remove('rotated');
   ['browseScreen','playerScreen','upNextScreen','settingsScreen'].forEach(id => {
     $(id).classList.toggle('hidden', id !== screenId);
   });
