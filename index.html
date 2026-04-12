@@ -143,6 +143,7 @@
   .channel-card > * { position: relative; z-index: 1; }
   .channel-card:active { transform: scale(0.93); }
   .channel-card .emoji { font-size: 44px; }
+  .channel-card .avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: rgba(255,255,255,0.1); }
   .channel-card .name { font-size: 16px; font-weight: 700; }
 
   /* ---- VIDEO LIST ---- */
@@ -438,7 +439,6 @@
     <input type="text" id="addName" placeholder="Display name (e.g. Ms Rachel)">
     <input type="text" id="addId" placeholder="Channel URL, @handle, or ID">
     <div class="s-hint">Paste a URL like youtube.com/@Name or youtube.com/channel/UCxxxxx</div>
-    <input type="text" id="addEmoji" placeholder="Emoji (e.g. 🎵)" maxlength="4">
     <div class="color-picker" id="colorPicker"></div>
     <button class="btn btn-primary" id="addChannelBtn">+ Add Channel</button>
   </div>
@@ -453,7 +453,7 @@
 // =============================================
 // CONFIG
 // =============================================
-const COLORS = ['#e94560','#3b82f6','#4ecca3','#f59e0b','#a855f7','#ec4899','#06b6d4','#84cc16'];
+const COLORS = ['#dc2626','#e94560','#ec4899','#d946ef','#a855f7','#6366f1','#3b82f6','#0ea5e9','#06b6d4','#14b8a6','#4ecca3','#84cc16','#eab308','#f59e0b','#f97316','#64748b'];
 
 const DEFAULT_CONFIG = {
   pin: '1234',
@@ -588,7 +588,8 @@ function renderChannels() {
     const card = document.createElement('div');
     card.className = 'channel-card';
     card.style.background = ch.color;
-    card.innerHTML = `<div class="emoji">${ch.emoji}</div><div class="name">${ch.name}</div>`;
+    const icon = `<img class="avatar" src="/api/avatar/${ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`;
+    card.innerHTML = `${icon}<div class="name">${ch.name}</div>`;
     card.onclick = () => selectChannel(ch);
     grid.appendChild(card);
   });
@@ -613,7 +614,7 @@ async function selectChannel(ch) {
   }
 
   $('videoGrid').innerHTML = '';
-  videos.slice(0, 10).forEach(v => {
+  videos.slice(0, 20).forEach(v => {
     const card = document.createElement('div');
     card.className = 'video-card';
     card.innerHTML = `
@@ -830,12 +831,35 @@ function renderSettingsChannels() {
   }
   cfg.channels.forEach((ch, i) => {
     const row = document.createElement('div');
-    row.className = 's-row';
-    row.innerHTML = `
-      <span class="label">${ch.emoji} ${ch.name}</span>
+    row.style.cssText = 'background:var(--bg);border-radius:8px;padding:10px;margin-bottom:8px;';
+    // Header row: avatar, name input, remove button
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+    header.innerHTML = `
+      <img src="/api/avatar/${ch.id}" style="width:32px;height:32px;border-radius:50%;flex-shrink:0" onerror="this.outerHTML='<span style=font-size:24px>${ch.emoji}</span>'">
+      <input type="text" value="${escHtml(ch.name)}" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;" data-field="name" data-i="${i}">
       <button class="btn btn-danger" data-i="${i}">Remove</button>
     `;
-    row.querySelector('button').onclick = () => {
+    // Color picker row
+    const colors = document.createElement('div');
+    colors.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-left:40px;';
+    COLORS.forEach(c => {
+      const sw = document.createElement('div');
+      sw.className = 'color-swatch' + (c === ch.color ? ' selected' : '');
+      sw.style.background = c;
+      sw.style.cssText += 'width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid ' + (c === ch.color ? '#fff' : 'transparent');
+      sw.onclick = () => { ch.color = c; renderSettingsChannels(); };
+      colors.appendChild(sw);
+    });
+    row.appendChild(header);
+    row.appendChild(colors);
+    // Wire up name editing
+    header.querySelector('input').onchange = function() {
+      const v = this.value.trim();
+      if (v) ch.name = v;
+      else this.value = ch.name;
+    };
+    header.querySelector('button').onclick = () => {
       cfg.channels.splice(i, 1);
       renderSettingsChannels();
     };
@@ -858,8 +882,13 @@ function renderColorPicker() {
 $('addChannelBtn').onclick = async () => {
   const name = $('addName').value.trim();
   let id = $('addId').value.trim();
-  const emoji = $('addEmoji').value.trim() || '📺';
+  const emoji = '📺';
   if (!name || !id) return alert('Name and Channel ID are required');
+
+  const btn = $('addChannelBtn');
+  btn.textContent = 'Looking up...';
+  btn.disabled = true;
+  let avatar = null;
 
   // Try to extract channel ID from URL patterns
   let match = id.match(/channel\/(UC[\w-]+)/);
@@ -868,14 +897,12 @@ $('addChannelBtn').onclick = async () => {
   // Resolve @handle URLs (e.g. youtube.com/@PeppaPig or just @PeppaPig)
   const handleMatch = id.match(/@([\w.-]+)/);
   if (handleMatch && !id.startsWith('UC')) {
-    const btn = $('addChannelBtn');
-    btn.textContent = 'Looking up...';
-    btn.disabled = true;
     try {
       const resp = await fetch(`/api/resolve-channel?handle=${encodeURIComponent(handleMatch[0])}`, { signal: AbortSignal.timeout(10000) });
       if (resp.ok) {
         const data = await resp.json();
         id = data.channelId;
+        avatar = data.avatar;
       } else {
         btn.textContent = '+ Add Channel';
         btn.disabled = false;
@@ -886,20 +913,33 @@ $('addChannelBtn').onclick = async () => {
       btn.disabled = false;
       return alert('Failed to look up channel. Try pasting the channel ID directly.');
     }
-    btn.textContent = '+ Add Channel';
-    btn.disabled = false;
   }
 
   if (!id.startsWith('UC')) {
+    btn.textContent = '+ Add Channel';
+    btn.disabled = false;
     alert('Channel ID should start with "UC". You can paste a channel URL, @handle, or ID.');
     return;
   }
 
-  cfg.channels.push({ name, id, emoji, color: selectedColor });
+  // Fetch avatar if we don't have one yet (direct channel ID entry)
+  if (!avatar) {
+    try {
+      const resp = await fetch(`/api/resolve-channel?channelId=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        avatar = data.avatar;
+      }
+    } catch(e) {}
+  }
+
+  btn.textContent = '+ Add Channel';
+  btn.disabled = false;
+
+  cfg.channels.push({ name, id, emoji, color: selectedColor, avatar });
   renderSettingsChannels();
   $('addName').value = '';
   $('addId').value = '';
-  $('addEmoji').value = '';
 };
 
 $('saveBtn').onclick = async () => {
