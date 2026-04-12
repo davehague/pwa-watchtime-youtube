@@ -239,6 +239,25 @@
     font-size: 16px;
     font-weight: 600;
   }
+  .shuffle-btn {
+    margin-left: auto;
+    background: var(--green);
+    border: none;
+    color: #fff;
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 19px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .shuffle-btn:active { transform: scale(0.9); }
+  .shuffle-btn.spinning .shuffle-icon { animation: spin 0.5s ease; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .video-grid {
     display: flex;
     flex-direction: column;
@@ -486,7 +505,10 @@
 
 <!-- SCREEN: Video List -->
 <div class="screen hidden" id="videoListScreen">
-  <div class="video-list-header" id="videoListHeader"></div>
+  <div class="video-list-header">
+    <span id="videoListHeader"></span>
+    <button class="shuffle-btn" id="shuffleBtn"><span class="shuffle-icon">🔀</span> More!</button>
+  </div>
   <div class="video-grid" id="videoGrid"></div>
 </div>
 
@@ -752,12 +774,17 @@ async function selectChannel(ch) {
   currentChannel = ch;
   showOnly('videoListScreen');
   $('videoListHeader').innerHTML = `${ch.emoji} <span>${ch.name}</span>`;
+  $('shuffleBtn').style.display = ch.id.startsWith('PL') ? 'inline-flex' : 'none';
+  await loadVideoList(ch, false);
+}
+
+async function loadVideoList(ch, bustCache = false) {
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading videos...</div>`;
 
-  const videos = await fetchVideos(ch.id);
+  const videos = await fetchVideos(ch.id, bustCache);
   videoCache[ch.id] = videos;
 
-  if (timer.remaining <= 0) return; // session ended while loading
+  if (timer.remaining <= 0) return;
 
   if (videos.length === 0) {
     $('videoGrid').innerHTML = `<div class="video-loading">Couldn't load videos.<br>Check the Channel ID in settings.</div>`;
@@ -777,9 +804,18 @@ async function selectChannel(ch) {
   });
 }
 
-async function fetchVideos(channelId) {
+$('shuffleBtn').onclick = async () => {
+  if (!currentChannel) return;
+  const btn = $('shuffleBtn');
+  btn.classList.add('spinning');
+  setTimeout(() => btn.classList.remove('spinning'), 500);
+  await loadVideoList(currentChannel, true);
+};
+
+async function fetchVideos(channelId, bustCache = false) {
   try {
-    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
+    const cacheBust = bustCache ? `?_=${Date.now()}` : '';
+    const resp = await fetch(`/api/yt-feed/${channelId}${cacheBust}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
     const videos = await resp.json();
     return videos.map(v => ({
