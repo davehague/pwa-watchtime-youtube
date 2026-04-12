@@ -537,7 +537,10 @@
 
 <!-- SCREEN: Settings -->
 <div class="settings-screen hidden" id="settingsScreen">
-  <h2>⚙ Settings</h2>
+  <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+    <button class="btn btn-secondary" id="settingsBackBtn" style="padding:6px 14px; font-size:14px; white-space:nowrap;">◀ Back</button>
+    <h2 style="margin:0;">⚙ Settings</h2>
+  </div>
 
   <div class="s-group">
     <h3>Session Timer (seconds — switch to minutes later)</h3>
@@ -1202,12 +1205,14 @@ $('saveBtn').onclick = async () => {
   resetTimerUI();
 };
 
-$('cancelBtn').onclick = () => {
-  cfg = loadConfig();
+const cancelSettings = async () => {
+  cfg = await loadConfig();
   showOnly('channelScreen');
   renderChannels();
   resetTimerUI();
 };
+$('cancelBtn').onclick = cancelSettings;
+$('settingsBackBtn').onclick = cancelSettings;
 
 // =============================================
 // YOUTUBE IFRAME API
