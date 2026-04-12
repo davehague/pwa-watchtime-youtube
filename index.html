@@ -629,6 +629,7 @@ let pinState = { buffer: '', callback: null };
 let selectedColor = COLORS[0];
 let ytPlayer = null;
 let ytReady = false;
+let wakeLock = null;
 let currentChannel = null;
 let currentVideoId = null;
 let videoCache = {}; // channelId -> [videos]
@@ -641,10 +642,26 @@ const $ = id => document.getElementById(id);
 // =============================================
 // TIMER
 // =============================================
+async function acquireWakeLock() {
+  if ('wakeLock' in navigator) {
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+
+// Re-acquire wake lock when returning to the app (visibility change releases it)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && timer.running) acquireWakeLock();
+});
+
 function startSession() {
   timer.total = cfg.timerSeconds;
   timer.remaining = cfg.timerSeconds;
   timer.running = true;
+  acquireWakeLock();
   updateTimerUI();
   timer.interval = setInterval(() => {
     timer.remaining = Math.max(0, timer.remaining - 1);
@@ -659,6 +676,7 @@ function startSession() {
 function stopSession() {
   clearInterval(timer.interval);
   timer.running = false;
+  releaseWakeLock();
 }
 
 function updateTimerUI() {
