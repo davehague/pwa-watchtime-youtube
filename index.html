@@ -436,8 +436,8 @@
     <hr style="border-color:var(--border); margin:10px 0">
     <h3>Add Channel</h3>
     <input type="text" id="addName" placeholder="Display name (e.g. Ms Rachel)">
-    <input type="text" id="addId" placeholder="YouTube Channel ID (starts with UC...)">
-    <div class="s-hint">Find this in the channel URL: youtube.com/channel/<strong>UCxxxxx</strong></div>
+    <input type="text" id="addId" placeholder="Channel URL, @handle, or ID">
+    <div class="s-hint">Paste a URL like youtube.com/@Name or youtube.com/channel/UCxxxxx</div>
     <input type="text" id="addEmoji" placeholder="Emoji (e.g. 🎵)" maxlength="4">
     <div class="color-picker" id="colorPicker"></div>
     <button class="btn btn-primary" id="addChannelBtn">+ Add Channel</button>
@@ -465,16 +465,38 @@ const DEFAULT_CONFIG = {
   ]
 };
 
-function loadConfig() {
+async function loadConfig() {
+  try {
+    const resp = await fetch('/api/config', { signal: AbortSignal.timeout(5000) });
+    if (resp.ok) {
+      const c = await resp.json();
+      localStorage.setItem('wt_cfg', JSON.stringify(c));
+      return c;
+    }
+  } catch(e) {}
+  // Fallback to localStorage
   try {
     const s = localStorage.getItem('wt_cfg');
     if (s) return JSON.parse(s);
   } catch(e) {}
   return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 }
-function saveConfig(c) { localStorage.setItem('wt_cfg', JSON.stringify(c)); }
 
-let cfg = loadConfig();
+async function saveConfig(c) {
+  localStorage.setItem('wt_cfg', JSON.stringify(c));
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch(e) {
+    console.warn('Failed to save config to server, saved locally only');
+  }
+}
+
+let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // placeholder until async load
 
 // =============================================
 // STATE
@@ -833,7 +855,7 @@ function renderColorPicker() {
   });
 }
 
-$('addChannelBtn').onclick = () => {
+$('addChannelBtn').onclick = async () => {
   const name = $('addName').value.trim();
   let id = $('addId').value.trim();
   const emoji = $('addEmoji').value.trim() || '📺';
@@ -842,8 +864,34 @@ $('addChannelBtn').onclick = () => {
   // Try to extract channel ID from URL patterns
   let match = id.match(/channel\/(UC[\w-]+)/);
   if (match) id = match[1];
+
+  // Resolve @handle URLs (e.g. youtube.com/@PeppaPig or just @PeppaPig)
+  const handleMatch = id.match(/@([\w.-]+)/);
+  if (handleMatch && !id.startsWith('UC')) {
+    const btn = $('addChannelBtn');
+    btn.textContent = 'Looking up...';
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/resolve-channel?handle=${encodeURIComponent(handleMatch[0])}`, { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        id = data.channelId;
+      } else {
+        btn.textContent = '+ Add Channel';
+        btn.disabled = false;
+        return alert('Could not find that channel. Try pasting the channel ID directly.');
+      }
+    } catch(e) {
+      btn.textContent = '+ Add Channel';
+      btn.disabled = false;
+      return alert('Failed to look up channel. Try pasting the channel ID directly.');
+    }
+    btn.textContent = '+ Add Channel';
+    btn.disabled = false;
+  }
+
   if (!id.startsWith('UC')) {
-    alert('Channel ID should start with "UC". You can find it in the channel URL.');
+    alert('Channel ID should start with "UC". You can paste a channel URL, @handle, or ID.');
     return;
   }
 
@@ -854,14 +902,14 @@ $('addChannelBtn').onclick = () => {
   $('addEmoji').value = '';
 };
 
-$('saveBtn').onclick = () => {
+$('saveBtn').onclick = async () => {
   const t = parseInt($('setTimer').value);
   const p = $('setPin').value;
   if (isNaN(t) || t < 5) return alert('Timer must be at least 5 seconds');
   if (!/^\d{4}$/.test(p)) return alert('PIN must be exactly 4 digits');
   cfg.timerSeconds = t;
   cfg.pin = p;
-  saveConfig(cfg);
+  await saveConfig(cfg);
   showOnly('channelScreen');
   renderChannels();
   resetTimerUI();
@@ -886,8 +934,12 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 // =============================================
 // INIT
 // =============================================
-renderChannels();
-resetTimerUI();
+(async () => {
+  $('channelGrid').innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px 0;">Loading...</p>';
+  cfg = await loadConfig();
+  renderChannels();
+  resetTimerUI();
+})();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
