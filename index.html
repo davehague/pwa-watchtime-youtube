@@ -594,38 +594,14 @@ async function selectChannel(ch) {
 }
 
 async function fetchVideos(channelId) {
-  // Try the public RSS feed via a CORS-friendly approach
-  // YouTube RSS: https://www.youtube.com/feeds/videos.xml?channel_id=XXXXX
-  // We'll try multiple CORS proxies, then fall back to playlist embed
-  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-  const proxies = [
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
-
-  for (const proxy of proxies) {
-    try {
-      const resp = await fetch(proxy(feedUrl), { signal: AbortSignal.timeout(6000) });
-      if (!resp.ok) continue;
-      const text = await resp.text();
-      return parseAtomFeed(text);
-    } catch(e) {
-      continue;
-    }
-  }
-
-  // If CORS proxies fail, try direct fetch (works if served from same Caddy with a proxy route)
   try {
-    const resp = await fetch(`/yt-feed/${channelId}`, { signal: AbortSignal.timeout(5000) });
-    if (resp.ok) {
-      const text = await resp.text();
-      return parseAtomFeed(text);
-    }
-  } catch(e) {}
-
-  // Final fallback: construct video IDs from known playlist pattern
-  // This won't have titles but gives us thumbnails
-  return [];
+    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) return [];
+    const text = await resp.text();
+    return parseAtomFeed(text);
+  } catch(e) {
+    return [];
+  }
 }
 
 function parseAtomFeed(xml) {
