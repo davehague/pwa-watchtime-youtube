@@ -862,9 +862,8 @@ async function showUpNext() {
 // TIME'S UP
 // =============================================
 function onTimesUp() {
-  if (ytPlayer) {
-    try { ytPlayer.pauseVideo(); } catch(e) {}
-  }
+  destroyPlayer();
+  showOnly('channelScreen');
   const overlay = $('timesUpOverlay');
   overlay.classList.remove('hidden');
   // Spawn confetti
