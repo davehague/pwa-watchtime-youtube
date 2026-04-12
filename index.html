@@ -1260,20 +1260,38 @@ function isFullscreen() {
   return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
 }
 
+let fsUnlocked = false; // true after PIN verified for exit
+
 function updateFullscreenBtn() {
   $('fullscreenBtn').textContent = isFullscreen() ? '⊡' : '⛶';
   $('fullscreenBtn').title = isFullscreen() ? 'Exit Fullscreen' : 'Fullscreen';
 }
 
-// Toggle fullscreen on button click
+// Toggle fullscreen on button click — require PIN to exit
 $('fullscreenBtn').onclick = () => {
-  if (isFullscreen()) exitFullscreen();
-  else goFullscreen();
+  if (isFullscreen()) {
+    requestPin(ok => {
+      if (ok) {
+        fsUnlocked = true;
+        exitFullscreen();
+      }
+    });
+  } else {
+    fsUnlocked = false;
+    goFullscreen();
+  }
 };
 
-// Update button icon when fullscreen changes
+// If browser exits fullscreen (Escape key, gesture) without PIN, re-enter
 ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange','msfullscreenchange'].forEach(evt => {
-  document.addEventListener(evt, updateFullscreenBtn);
+  document.addEventListener(evt, () => {
+    updateFullscreenBtn();
+    if (!isFullscreen() && !fsUnlocked) {
+      // Exited without PIN — go back to fullscreen
+      setTimeout(() => goFullscreen(), 100);
+    }
+    if (!isFullscreen()) fsUnlocked = false;
+  });
 });
 
 // Hide fullscreen button if API not available (already standalone PWA, etc.)
