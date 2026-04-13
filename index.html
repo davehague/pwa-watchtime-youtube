@@ -253,8 +253,7 @@
     gap: 20px;
   }
   @media (orientation: portrait) {
-    .video-grid { grid-template-columns: 1fr; }
-    padding: 0 0 24px;
+    .video-grid { grid-template-columns: 1fr; padding: 0 0 24px; }
   }
 
   .video-card {
@@ -447,18 +446,6 @@
   .btn-block { width: 100%; }
 
   .hidden { display: none !important; }
-  
-  /* Colors for cards */
-  .color-swatch {
-    display: inline-block;
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    border: 2px solid transparent;
-    cursor: pointer;
-    margin-right: 6px;
-  }
-  .color-swatch.selected { border-color: #fff; }
-  .color-picker { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -547,7 +534,7 @@
   </div>
 
   <div class="s-group">
-    <h3>Session Timer (seconds — switch to minutes later)</h3>
+    <h3>Session Timer (seconds)</h3>
     <input type="number" id="setTimer" min="5" max="7200" inputmode="numeric">
     <div class="s-hint">Starts when a video is tapped. Counts down during browsing and watching.</div>
   </div>
@@ -565,7 +552,6 @@
     <input type="text" id="addName" placeholder="Display name (e.g. Ms Rachel)">
     <input type="text" id="addId" placeholder="Channel URL, @handle, ID, or playlist URL">
     <div class="s-hint">Paste a channel URL, @handle, channel ID, or playlist URL</div>
-    <div class="color-picker" id="colorPicker"></div>
     <button class="btn btn-primary" id="addChannelBtn">+ Add Channel</button>
   </div>
 
@@ -580,7 +566,6 @@
 // =============================================
 // CONFIG
 // =============================================
-const COLORS = ['#FF0000','#FF2D00','#FF5500','#FF8800','#FFBB00','#FFEE00','#CCFF00','#66FF00','#00FF44','#00FFAA','#00FFFF','#00AAFF','#0055FF','#2200FF','#8800FF','#DD00FF','#FF00AA','#FF0066'];
 
 const DEFAULT_CONFIG = {
   pin: '1234',
@@ -630,7 +615,6 @@ let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // placeholder until async
 // =============================================
 let timer = { remaining: 0, total: 0, interval: null, running: false };
 let pinState = { buffer: '', callback: null };
-let selectedColor = COLORS[0];
 let ytPlayer = null;
 let ytReady = false;
 let wakeLock = null;
@@ -1176,7 +1160,6 @@ function openSettings() {
   $('setTimer').value = cfg.timerSeconds;
   $('setPin').value = cfg.pin;
   renderSettingsChannels();
-  renderColorPicker();
   showOnly('settingsScreen');
 }
 
@@ -1198,17 +1181,6 @@ function renderSettingsChannels() {
       <input type="text" value="${escHtml(ch.name)}" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;" data-field="name" data-i="${i}">
       <button class="btn btn-danger" data-i="${i}">Remove</button>
     `;
-    // Color picker row
-    const colors = document.createElement('div');
-    colors.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-left:40px;';
-    COLORS.forEach(c => {
-      const sw = document.createElement('div');
-      sw.className = 'color-swatch' + (c === ch.color ? ' selected' : '');
-      sw.style.background = c;
-      sw.style.cssText += 'width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid ' + (c === ch.color ? '#fff' : 'transparent');
-      sw.onclick = () => { ch.color = c; renderSettingsChannels(); };
-      colors.appendChild(sw);
-    });
     // ID row
     const idRow = document.createElement('div');
     idRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;margin-left:40px;';
@@ -1222,7 +1194,6 @@ function renderSettingsChannels() {
     `;
     row.appendChild(header);
     row.appendChild(idRow);
-    row.appendChild(colors);
     // Wire up name editing
     header.querySelector('input').onchange = function() {
       const v = this.value.trim();
@@ -1246,18 +1217,6 @@ function renderSettingsChannels() {
       renderSettingsChannels();
     };
     el.appendChild(row);
-  });
-}
-
-function renderColorPicker() {
-  const el = $('colorPicker');
-  el.innerHTML = '';
-  COLORS.forEach(c => {
-    const sw = document.createElement('div');
-    sw.className = 'color-swatch' + (c === selectedColor ? ' selected' : '');
-    sw.style.background = c;
-    sw.onclick = () => { selectedColor = c; renderColorPicker(); };
-    el.appendChild(sw);
   });
 }
 
@@ -1287,7 +1246,7 @@ $('addChannelBtn').onclick = async () => {
     } catch(e) {}
     btn.textContent = '+ Add Channel';
     btn.disabled = false;
-    cfg.channels.push({ name, id, emoji: '🎵', color: selectedColor, avatar: plThumb });
+    cfg.channels.push({ name, id, emoji: '🎵', avatar: plThumb });
     renderSettingsChannels();
     $('addName').value = '';
     $('addId').value = '';
@@ -1340,7 +1299,7 @@ $('addChannelBtn').onclick = async () => {
   btn.textContent = '+ Add Channel';
   btn.disabled = false;
 
-  cfg.channels.push({ name, id, emoji, color: selectedColor, avatar });
+  cfg.channels.push({ name, id, emoji, avatar });
   renderSettingsChannels();
   $('addName').value = '';
   $('addId').value = '';
