@@ -1,15 +1,18 @@
 # WatchTime
 
-Kid-friendly YouTube session timer for Amazon Fire 7 tablet. Parent-controlled channels with a countdown timer that locks the screen when time's up.
+Kid-friendly YouTube session timer for Amazon Fire 7 tablet. Parent-controlled channels and playlists with a countdown timer that locks the screen when time's up.
 
 ## How it works
 
-- **Parent mode** (PIN protected, default: `1234`): configure YouTube channels, session duration, and PIN
-- **Kid mode**: tap a channel card (shows profile picture), browse recent videos, tap to watch via YouTube embed
-- **Session timer**: starts when a channel is tapped, counts down through browsing AND watching
-- **Up Next**: when a video ends, suggests more from the current channel plus picks from other channels
-- **Shorts filtered**: YouTube Shorts are automatically excluded from video lists
+- **Parent mode** (PIN protected, default: `1234`): configure YouTube channels/playlists, session duration, and PIN
+- **Kid mode**: split-screen browse layout — feed sidebar (left) with video grid (right), round-robin interleaved from all feeds
+- **Channels and playlists**: add YouTube channels (latest videos via RSS) or playlists (random selection via YouTube Data API)
+- **Session timer**: starts when a video is tapped, counts down through browsing AND watching
+- **Fullscreen**: auto-enters fullscreen on first interaction; exiting fullscreen requires PIN
+- **Wake lock**: screen stays on during active sessions
+- **Shorts filtered**: YouTube Shorts are automatically excluded from channel video lists
 - **Time's up**: video pauses, fullscreen lock overlay until parent enters PIN
+- **Responsive**: landscape shows split-screen with feed sidebar; portrait hides sidebar and shows all-channel grid
 
 ## Architecture
 
@@ -20,9 +23,10 @@ Vercel serverless functions handle backend work:
 | Endpoint | Purpose |
 |---|---|
 | `/api/config` | GET/POST app config (stored in Upstash Redis) |
-| `/api/yt-feed/[channelId]` | Fetches YouTube RSS feed, filters out Shorts, returns JSON |
+| `/api/yt-feed/[channelId]` | Fetches videos — RSS for channels, YouTube Data API for playlists. Filters Shorts. |
 | `/api/resolve-channel` | Resolves `@handles` and channel URLs to channel IDs + avatar URLs |
 | `/api/avatar/[channelId]` | Proxies channel profile images (avoids Google CDN rate limits) |
+| `/api/playlist-info` | Fetches playlist thumbnail from YouTube Data API |
 
 Config (channels, timer, PIN) stored in **Upstash Redis** with localStorage as offline fallback.
 
@@ -40,6 +44,7 @@ vercel --prod
 
 1. Link an **Upstash for Redis** store to the project in the Vercel dashboard (prefix: `KV`)
 2. This provides `KV_REST_API_URL` and `KV_REST_API_TOKEN` env vars automatically
+3. Set `YOUTUBE_API_KEY` env var for playlist support (YouTube Data API v3)
 
 ## Development
 
@@ -48,7 +53,7 @@ vercel env pull    # pulls Upstash credentials to .env.local
 vercel dev         # serves at http://localhost:3000
 ```
 
-## Adding channels
+## Adding channels and playlists
 
 In settings (gear icon, PIN required), paste any of these formats:
 
@@ -56,5 +61,6 @@ In settings (gear icon, PIN required), paste any of these formats:
 - `@ChannelName`
 - `https://www.youtube.com/channel/UCxxxxxxx`
 - `UCxxxxxxx`
+- `https://www.youtube.com/playlist?list=PLxxxxxxx`
 
-The app resolves `@handles` to channel IDs automatically and fetches the channel's profile picture.
+The app resolves `@handles` to channel IDs automatically and fetches the channel's profile picture. Playlists use the YouTube Data API to fetch all items and show a random 10 per session.
