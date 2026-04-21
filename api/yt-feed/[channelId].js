@@ -1,3 +1,11 @@
+import { Redis } from '@upstash/redis';
+
+const redis = process.env.KV_REST_API_URL
+  ? new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN })
+  : null;
+
+const CACHE_PREFIX = 'feed:';
+
 export default async function handler(req, res) {
   const { channelId } = req.query;
 
@@ -16,7 +24,21 @@ export default async function handler(req, res) {
       videos = videos.slice(0, 10);
     } else {
       // Use RSS feed for channels (free, no quota)
-      videos = await fetchRSSVideos(channelId);
+      try {
+        videos = await fetchRSSVideos(channelId);
+      } catch (rssErr) {
+        // RSS fails for "Made for Kids" channels and during YouTube flakiness.
+        // Fall back to Data API uploads playlist (UC… → UU…).
+        if (!process.env.YOUTUBE_API_KEY) throw rssErr;
+        const uploadsId = 'UU' + channelId.slice(2);
+        videos = await fetchPlaylistVideos(uploadsId);
+        videos = videos.slice(0, 15);
+      }
+    }
+
+    // Cache last-good response for stale fallback
+    if (redis && videos.length) {
+      redis.set(CACHE_PREFIX + channelId, videos).catch(() => {});
     }
 
     res.setHeader('Content-Type', 'application/json');
@@ -24,6 +46,18 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(200).json(videos);
   } catch (e) {
+    // Both RSS and Data API failed — serve stale from Redis if we have it
+    if (redis) {
+      try {
+        const stale = await redis.get(CACHE_PREFIX + channelId);
+        if (stale && Array.isArray(stale) && stale.length) {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('X-From-Stale-Cache', '1');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          return res.status(200).json(stale);
+        }
+      } catch {}
+    }
     return res.status(502).send('Failed to fetch feed');
   }
 }
