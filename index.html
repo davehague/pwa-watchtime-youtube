@@ -776,7 +776,9 @@ async function loadAllFeeds() {
 
 function getRoundRobinVideos(upTo) {
   const result = [];
-  const feeds = cfg.channels.map(ch => videoCache[ch.id] || []);
+  // Server returns up to 50 for playlists so the shuffle button has variety;
+  // cap each feed's contribution to the "All" round-robin so playlists don't dominate.
+  const feeds = cfg.channels.map(ch => (videoCache[ch.id] || []).slice(0, 15));
   const maxLen = Math.max(...feeds.map(f => f.length), 0);
   for (let row = 0; row < maxLen && result.length < upTo; row++) {
     for (let col = 0; col < feeds.length && result.length < upTo; col++) {
@@ -802,12 +804,24 @@ function renderRoundRobin() {
   roundRobinIndex++;
 }
 
-function renderSingleFeed(ch) {
-  const videos = videoCache[ch.id] || [];
+function renderSingleFeed(ch, { reshuffle = false } = {}) {
+  const all = videoCache[ch.id] || [];
   $('videoGrid').innerHTML = '';
-  if (videos.length === 0) {
+  if (all.length === 0) {
     $('videoGrid').innerHTML = `<div class="video-loading">Couldn't load videos.<br>Check settings.</div>`;
     return;
+  }
+  // Playlists: server returns up to 50, show 10 and let shuffle re-pick locally
+  let videos = all;
+  if (ch.id.startsWith('PL') && all.length > 10) {
+    const pool = all.slice();
+    if (reshuffle) {
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+    videos = pool.slice(0, 10);
   }
   videos.forEach(v => {
     $('videoGrid').appendChild(makeVideoCard(v));
@@ -848,14 +862,12 @@ $('shuffleBtn').onclick = async () => {
   if (!ch) return;
   $('shuffleBtn').classList.add('spinning');
   setTimeout(() => $('shuffleBtn').classList.remove('spinning'), 500);
-  videoCache[ch.id] = await fetchVideos(ch.id, true);
-  renderSingleFeed(ch);
+  renderSingleFeed(ch, { reshuffle: true });
 };
 
-async function fetchVideos(channelId, bustCache = false) {
+async function fetchVideos(channelId) {
   try {
-    const cacheBust = bustCache ? `?_=${Date.now()}` : '';
-    const resp = await fetch(`/api/yt-feed/${channelId}${cacheBust}`, { signal: AbortSignal.timeout(15000) });
+    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
     const videos = await resp.json();
     return videos.map(v => ({

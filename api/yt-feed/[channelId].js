@@ -5,6 +5,11 @@ const redis = process.env.KV_REST_API_URL
   : null;
 
 const CACHE_PREFIX = 'feed:';
+const SHORTS_PREFIX = 'short:';
+const PLAYLIST_PREFIX = 'playlist:';
+const SHORTS_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days — a video's Short status never changes
+const PLAYLIST_TTL_SECONDS = 60 * 60 * 12;    // 12 hours — refetch playlist contents twice/day
+const STALE_TTL_SECONDS = 60 * 60 * 24 * 7;   // 7 days — stale fallback cache
 
 export default async function handler(req, res) {
   const { channelId } = req.query;
@@ -17,11 +22,22 @@ export default async function handler(req, res) {
     let videos;
 
     if (channelId.startsWith('PL') && process.env.YOUTUBE_API_KEY) {
-      // Use YouTube Data API for playlists (fetches all items, not just 15)
-      videos = await fetchPlaylistVideos(channelId);
-      // Shuffle and pick 10 random videos per session
+      // Playlists rarely change — cache full contents in Redis for 12h to avoid
+      // paginating the entire playlist on every cache miss.
+      let pool = null;
+      if (redis) {
+        try { pool = await redis.get(PLAYLIST_PREFIX + channelId); } catch {}
+      }
+      if (!Array.isArray(pool) || !pool.length) {
+        pool = await fetchPlaylistVideos(channelId);
+        if (redis && pool.length) {
+          redis.set(PLAYLIST_PREFIX + channelId, pool, { ex: PLAYLIST_TTL_SECONDS }).catch(() => {});
+        }
+      }
+      // Shuffle and return up to 50 — client picks 10 to show and re-shuffles locally
+      videos = pool.slice();
       shuffle(videos);
-      videos = videos.slice(0, 10);
+      videos = videos.slice(0, 50);
     } else {
       // Use RSS feed for channels (free, no quota)
       try {
@@ -38,11 +54,11 @@ export default async function handler(req, res) {
 
     // Cache last-good response for stale fallback
     if (redis && videos.length) {
-      redis.set(CACHE_PREFIX + channelId, videos).catch(() => {});
+      redis.set(CACHE_PREFIX + channelId, videos, { ex: STALE_TTL_SECONDS }).catch(() => {});
     }
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=120');
+    res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
     res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(200).json(videos);
   } catch (e) {
@@ -82,7 +98,12 @@ async function fetchPlaylistVideos(playlistId, { maxPages = Infinity } = {}) {
     if (pages++ >= maxPages) break;
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${playlistId}&key=${apiKey}${pageToken ? '&pageToken=' + pageToken : ''}`;
     const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!resp.ok) break;
+    if (!resp.ok) {
+      // Partial failure on page 2+ would poison a 12h cache with a truncated pool.
+      // Fail the whole request so the caller can fall back or serve stale.
+      if (pages > 1) throw new Error(`Playlist fetch failed on page ${pages}: ${resp.status}`);
+      break;
+    }
     const data = await resp.json();
 
     for (const item of data.items || []) {
@@ -99,6 +120,60 @@ async function fetchPlaylistVideos(playlistId, { maxPages = Infinity } = {}) {
   return allVideos;
 }
 
+// Classify which video IDs are Shorts, using Redis to cache results long-term.
+// Returns a Set of IDs that are Shorts.
+async function classifyShorts(videoIds) {
+  if (!videoIds.length) return new Set();
+
+  const keys = videoIds.map(id => SHORTS_PREFIX + id);
+  let cached = [];
+  if (redis) {
+    try { cached = await redis.mget(...keys); } catch { cached = []; }
+  }
+
+  const shortsSet = new Set();
+  const toProbe = [];
+  videoIds.forEach((id, i) => {
+    const v = cached[i];
+    if (v === 1 || v === '1') shortsSet.add(id);
+    else if (v === 0 || v === '0') { /* known not-short */ }
+    else toProbe.push(id);
+  });
+
+  if (toProbe.length) {
+    const results = await Promise.all(
+      toProbe.map(async id => {
+        try {
+          const r = await fetch(`https://www.youtube.com/shorts/${id}`, {
+            method: 'HEAD',
+            redirect: 'manual',
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(4000),
+          });
+          return { id, isShort: r.status === 200, ok: true };
+        } catch {
+          return { id, isShort: false, ok: false };
+        }
+      })
+    );
+
+    if (redis) {
+      const pipe = redis.pipeline();
+      let writes = 0;
+      for (const { id, isShort, ok } of results) {
+        if (!ok) continue; // don't cache probe failures
+        pipe.set(SHORTS_PREFIX + id, isShort ? 1 : 0, { ex: SHORTS_TTL_SECONDS });
+        writes++;
+      }
+      if (writes) pipe.exec().catch(() => {});
+    }
+
+    for (const { id, isShort } of results) if (isShort) shortsSet.add(id);
+  }
+
+  return shortsSet;
+}
+
 async function fetchRSSVideos(channelId) {
   const param = channelId.startsWith('PL') ? 'playlist_id' : 'channel_id';
   const feedUrl = `https://www.youtube.com/feeds/videos.xml?${param}=${channelId}`;
@@ -109,24 +184,7 @@ async function fetchRSSVideos(channelId) {
 
   // Extract video IDs to check for Shorts
   const videoIds = [...xml.matchAll(/<yt:videoId>([^<]+)<\/yt:videoId>/g)].map(m => m[1]);
-
-  // Check which are Shorts (200 = Short, 303 redirect = regular video)
-  const shortsChecks = await Promise.all(
-    videoIds.map(async id => {
-      try {
-        const r = await fetch(`https://www.youtube.com/shorts/${id}`, {
-          method: 'HEAD',
-          redirect: 'manual',
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(4000),
-        });
-        return { id, isShort: r.status === 200 };
-      } catch {
-        return { id, isShort: false };
-      }
-    })
-  );
-  const shortsSet = new Set(shortsChecks.filter(c => c.isShort).map(c => c.id));
+  const shortsSet = await classifyShorts(videoIds);
 
   const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)];
   return entries
