@@ -31,7 +31,7 @@ export default async function handler(req, res) {
         // Fall back to Data API uploads playlist (UC… → UU…).
         if (!process.env.YOUTUBE_API_KEY) throw rssErr;
         const uploadsId = 'UU' + channelId.slice(2);
-        videos = await fetchPlaylistVideos(uploadsId);
+        videos = await fetchPlaylistVideos(uploadsId, { maxPages: 1 });
         videos = videos.slice(0, 15);
       }
     }
@@ -71,13 +71,15 @@ function shuffle(arr) {
   return arr;
 }
 
-async function fetchPlaylistVideos(playlistId) {
+async function fetchPlaylistVideos(playlistId, { maxPages = Infinity } = {}) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   const allVideos = [];
   let pageToken = '';
+  let pages = 0;
 
   // Paginate through all playlist items (50 per page)
   do {
+    if (pages++ >= maxPages) break;
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${playlistId}&key=${apiKey}${pageToken ? '&pageToken=' + pageToken : ''}`;
     const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!resp.ok) break;

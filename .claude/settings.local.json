@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /tmp/feed.xml -w 'HTTP:%{http_code} size:%{size_download} time:%{time_total}\\\\n' 'https://www.youtube.com/feeds/videos.xml?channel_id=__TRACKED_VAR__' --max-time 10)"
+    ]
+  }
+}
