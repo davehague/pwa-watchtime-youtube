@@ -284,6 +284,40 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  .video-card.continue-card {
+    outline: 3px solid var(--green);
+    outline-offset: -3px;
+  }
+  .video-card.continue-card .thumb-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+  }
+  .video-card.continue-card .thumb-wrap .thumb {
+    aspect-ratio: auto;
+    height: 100%;
+  }
+  .continue-badge {
+    position: absolute;
+    bottom: 3px;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    color: #fff;
+    padding: 18px 8px 6px;
+    font-size: 13px;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    pointer-events: none;
+  }
+  .continue-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: var(--green);
+    pointer-events: none;
+  }
   .video-loading {
     text-align: center;
     padding: 40px;
@@ -610,6 +644,45 @@ async function saveConfig(c) {
 
 let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // placeholder until async load
 
+async function loadLastWatched() {
+  try {
+    const resp = await fetch('/api/last-watched', { signal: AbortSignal.timeout(5000) });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data) localStorage.setItem('wt_last', JSON.stringify(data));
+      else localStorage.removeItem('wt_last');
+      return data || null;
+    }
+  } catch(e) {}
+  try {
+    const s = localStorage.getItem('wt_last');
+    if (s) return JSON.parse(s);
+  } catch(e) {}
+  return null;
+}
+
+async function saveLastWatched(payload) {
+  localStorage.setItem('wt_last', JSON.stringify({ ...payload, savedAt: Date.now() }));
+  try {
+    await fetch('/api/last-watched', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch(e) {}
+}
+
+async function clearLastWatched() {
+  localStorage.removeItem('wt_last');
+  try {
+    await fetch('/api/last-watched', {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch(e) {}
+}
+
 // =============================================
 // STATE
 // =============================================
@@ -621,6 +694,8 @@ let wakeLock = null;
 let currentChannel = null;
 let currentVideoId = null;
 let videoCache = {}; // channelId -> [videos]
+let lastWatched = null; // { videoId, title, channelId, channelName, position, duration, savedAt }
+let currentVideo = null; // last-touched video this session: { videoId, title, channelId, channelName, lastPosition, duration }
 
 // =============================================
 // DOM refs
@@ -654,8 +729,18 @@ function startSession() {
   timer.interval = setInterval(() => {
     timer.remaining = Math.max(0, timer.remaining - 1);
     updateTimerUI();
+    // Sample current player position so we can save it at time-up.
+    if (ytPlayer && currentVideo) {
+      try {
+        const pos = ytPlayer.getCurrentTime();
+        const dur = ytPlayer.getDuration();
+        if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.floor(pos);
+        if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
+      } catch(e) {}
+    }
     if (timer.remaining <= 0) {
       stopSession();
+      saveSessionWatchpoint();
       onTimesUp();
     }
   }, 1000);
@@ -665,6 +750,29 @@ function stopSession() {
   clearInterval(timer.interval);
   timer.running = false;
   releaseWakeLock();
+}
+
+function saveSessionWatchpoint() {
+  if (!currentVideo || !currentVideo.videoId) return;
+  // One last sample in case the player still has a fresher position.
+  if (ytPlayer) {
+    try {
+      const pos = ytPlayer.getCurrentTime();
+      const dur = ytPlayer.getDuration();
+      if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.floor(pos);
+      if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
+    } catch(e) {}
+  }
+  const { videoId, title, channelId, channelName, lastPosition, duration } = currentVideo;
+  const completed = duration > 0 && lastPosition / duration >= 0.95;
+  if (completed) {
+    lastWatched = null;
+    clearLastWatched();
+  } else {
+    const payload = { videoId, title, channelId, channelName, position: lastPosition || 0, duration: duration || 0 };
+    lastWatched = { ...payload, savedAt: Date.now() };
+    saveLastWatched(payload);
+  }
 }
 
 function updateTimerUI() {
@@ -778,7 +886,9 @@ function getRoundRobinVideos(upTo) {
   const result = [];
   // Server returns up to 50 for playlists so the shuffle button has variety;
   // cap each feed's contribution to the "All" round-robin so playlists don't dominate.
-  const feeds = cfg.channels.map(ch => (videoCache[ch.id] || []).slice(0, 15));
+  const feeds = cfg.channels.map(ch =>
+    (videoCache[ch.id] || []).slice(0, 15).map(v => ({ ...v, channelId: ch.id, channelName: ch.name }))
+  );
   const maxLen = Math.max(...feeds.map(f => f.length), 0);
   for (let row = 0; row < maxLen && result.length < upTo; row++) {
     for (let col = 0; col < feeds.length && result.length < upTo; col++) {
@@ -801,6 +911,8 @@ function renderRoundRobin() {
   videos.forEach(v => {
     $('videoGrid').appendChild(makeVideoCard(v));
   });
+  // The grid is rebuilt each call (including for infinite-scroll), so always re-pin the continue card.
+  prependContinueCardIfAny();
   roundRobinIndex++;
 }
 
@@ -824,8 +936,49 @@ function renderSingleFeed(ch, { reshuffle = false } = {}) {
     videos = pool.slice(0, 10);
   }
   videos.forEach(v => {
-    $('videoGrid').appendChild(makeVideoCard(v));
+    $('videoGrid').appendChild(makeVideoCard({ ...v, channelId: ch.id, channelName: ch.name }));
   });
+  prependContinueCardIfAny();
+}
+
+function makeContinueCard(lw) {
+  const card = document.createElement('div');
+  card.className = 'video-card continue-card';
+  const pos = Math.max(0, lw.position || 0);
+  const dur = Math.max(0, lw.duration || 0);
+  const pct = dur > 0 ? Math.min(100, Math.max(2, (pos / dur) * 100)) : 0;
+  const m = Math.floor(pos / 60);
+  const s = pos % 60;
+  const timeStr = `${m}:${String(s).padStart(2, '0')}`;
+  card.innerHTML = `
+    <div class="thumb-wrap">
+      <img class="thumb" src="https://img.youtube.com/vi/${lw.videoId}/mqdefault.jpg" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
+      <div class="continue-badge">▶ Continue at ${timeStr}</div>
+      <div class="continue-progress" style="width:${pct}%"></div>
+    </div>
+    <div class="info"><div class="title">${escHtml(lw.title || 'Continue watching')}</div></div>
+  `;
+  card.onclick = () => {
+    if (!timer.running) startSession();
+    playVideo({
+      videoId: lw.videoId,
+      title: lw.title,
+      channelId: lw.channelId,
+      channelName: lw.channelName,
+    }, lw.position || 0);
+  };
+  return card;
+}
+
+function prependContinueCardIfAny() {
+  const grid = $('videoGrid');
+  // Idempotent: drop any existing continue card before deciding what to render.
+  const existing = grid.querySelector('.continue-card');
+  if (existing) existing.remove();
+  if (!lastWatched || !lastWatched.videoId) return;
+  // Hide the card if its source channel/playlist is no longer in the user's list.
+  if (lastWatched.channelId && !cfg.channels.some(c => c.id === lastWatched.channelId)) return;
+  grid.prepend(makeContinueCard(lastWatched));
 }
 
 function makeVideoCard(v) {
@@ -837,7 +990,7 @@ function makeVideoCard(v) {
   `;
   card.onclick = () => {
     if (!timer.running) startSession();
-    playVideo(v.videoId);
+    playVideo(v);
   };
   return card;
 }
@@ -888,9 +1041,17 @@ function escHtml(str) {
 // =============================================
 // PLAYER
 // =============================================
-function playVideo(videoId) {
+function playVideo(v, startSeconds = 0) {
   if (timer.remaining <= 0) return;
-  currentVideoId = videoId;
+  currentVideoId = v.videoId;
+  currentVideo = {
+    videoId: v.videoId,
+    title: v.title || '',
+    channelId: v.channelId || (currentChannel ? currentChannel.id : null),
+    channelName: v.channelName || (currentChannel ? currentChannel.name : null),
+    lastPosition: Math.floor(startSeconds || 0),
+    duration: 0,
+  };
   showOnly('playerScreen');
 
   // Destroy existing player
@@ -901,19 +1062,19 @@ function playVideo(videoId) {
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
 
   if (ytReady) {
-    createPlayer(videoId);
+    createPlayer(v.videoId, startSeconds);
   } else {
     // Wait for API
     const check = setInterval(() => {
       if (ytReady) {
         clearInterval(check);
-        createPlayer(videoId);
+        createPlayer(v.videoId, startSeconds);
       }
     }, 200);
   }
 }
 
-function createPlayer(videoId) {
+function createPlayer(videoId, startSeconds = 0) {
   ytPlayer = new YT.Player('ytPlayer', {
     width: '100%',
     height: '100%',
@@ -926,10 +1087,28 @@ function createPlayer(videoId) {
       fs: 0,
     },
     events: {
-      onReady: e => { e.target.unMute(); e.target.setVolume(100); e.target.playVideo(); },
+      onReady: e => {
+        e.target.unMute();
+        e.target.setVolume(100);
+        // seekTo is more reliable than playerVars.start on mobile when combined with autoplay.
+        if (startSeconds > 0) e.target.seekTo(Math.floor(startSeconds), true);
+        e.target.playVideo();
+      },
       onStateChange: e => {
-        if (e.data === YT.PlayerState.ENDED && timer.remaining > 0) {
-          showUpNext();
+        if (e.data === YT.PlayerState.ENDED) {
+          // Snap lastPosition to duration so the 95%-complete check fires reliably for short videos
+          // (the 1-Hz sampler can leave lastPosition up to 1s short of duration).
+          if (currentVideo && currentVideo.duration > 0) {
+            currentVideo.lastPosition = currentVideo.duration;
+          }
+          if (timer.remaining > 0) showUpNext();
+        }
+      },
+      onError: e => {
+        // 100 = not found, 101/150 = embedding not allowed. If the resume target itself errored, clear it.
+        if (lastWatched && currentVideoId === lastWatched.videoId && (e.data === 100 || e.data === 101 || e.data === 150)) {
+          lastWatched = null;
+          clearLastWatched();
         }
       },
     }
@@ -994,7 +1173,7 @@ async function showUpNext() {
         ${chLabel}
       </div>
     `;
-    card.onclick = () => playVideo(v.videoId);
+    card.onclick = () => playVideo(v);
     grid.appendChild(card);
   });
 }
@@ -1005,6 +1184,8 @@ async function showUpNext() {
 function onTimesUp() {
   destroyPlayer();
   showOnly('browseScreen');
+  // Refresh the continue card so the new resume target is visible after PIN unlock.
+  prependContinueCardIfAny();
   const overlay = $('timesUpOverlay');
   overlay.classList.remove('hidden');
   // Spawn confetti
@@ -1325,11 +1506,18 @@ $('saveBtn').onclick = async () => {
   cfg.timerSeconds = t;
   cfg.pin = p;
   await saveConfig(cfg);
+  // If the saved continue-watching video belongs to a removed channel, clear it.
+  if (lastWatched && lastWatched.channelId && !cfg.channels.some(c => c.id === lastWatched.channelId)) {
+    lastWatched = null;
+    await clearLastWatched();
+  }
   $('saveBtn').textContent = 'Saved!';
   setTimeout(() => $('saveBtn').textContent = 'Save', 1500);
 };
 const exitSettings = async () => {
-  cfg = await loadConfig();
+  const [c, lw] = await Promise.all([loadConfig(), loadLastWatched()]);
+  cfg = c;
+  lastWatched = lw;
   allVideosLoaded = false;
   videoCache = {};
   showOnly('browseScreen');
@@ -1353,7 +1541,14 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 // =============================================
 (async () => {
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading...</div>`;
-  cfg = await loadConfig();
+  const [c, lw] = await Promise.all([loadConfig(), loadLastWatched()]);
+  cfg = c;
+  lastWatched = lw;
+  // Purge a cached resume entry whose channel was removed in another session.
+  if (lastWatched && lastWatched.channelId && !cfg.channels.some(ch => ch.id === lastWatched.channelId)) {
+    lastWatched = null;
+    clearLastWatched();
+  }
   // Shuffle channel order each session for variety
   for (let i = cfg.channels.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
