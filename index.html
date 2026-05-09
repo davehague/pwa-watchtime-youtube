@@ -284,18 +284,18 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .video-card.continue-card {
-    outline: 3px solid var(--green);
-    outline-offset: -3px;
-  }
-  .video-card.continue-card .thumb-wrap {
+  .video-card .thumb-wrap {
     position: relative;
     width: 100%;
     aspect-ratio: 16/9;
   }
-  .video-card.continue-card .thumb-wrap .thumb {
+  .video-card .thumb-wrap .thumb {
     aspect-ratio: auto;
     height: 100%;
+  }
+  .video-card.continue-card {
+    outline: 3px solid var(--green);
+    outline-offset: -3px;
   }
   .continue-badge {
     position: absolute;
@@ -310,7 +310,7 @@
     text-shadow: 0 1px 2px rgba(0,0,0,0.6);
     pointer-events: none;
   }
-  .continue-progress {
+  .watch-progress {
     position: absolute;
     bottom: 0;
     left: 0;
@@ -644,43 +644,61 @@ async function saveConfig(c) {
 
 let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // placeholder until async load
 
-async function loadLastWatched() {
+async function loadWatchHistory() {
   try {
-    const resp = await fetch('/api/last-watched', { signal: AbortSignal.timeout(5000) });
+    const resp = await fetch('/api/watch-history', { signal: AbortSignal.timeout(5000) });
     if (resp.ok) {
       const data = await resp.json();
-      if (data) localStorage.setItem('wt_last', JSON.stringify(data));
-      else localStorage.removeItem('wt_last');
-      return data || null;
+      const map = data && typeof data === 'object' ? data : {};
+      localStorage.setItem('wt_history', JSON.stringify(map));
+      return map;
     }
   } catch(e) {}
   try {
-    const s = localStorage.getItem('wt_last');
+    const s = localStorage.getItem('wt_history');
     if (s) return JSON.parse(s);
   } catch(e) {}
-  return null;
+  return {};
 }
 
-async function saveLastWatched(payload) {
-  localStorage.setItem('wt_last', JSON.stringify({ ...payload, savedAt: Date.now() }));
+async function saveWatchEntry(entry) {
+  // Mirror to localStorage immediately so UI reads stay fresh even if the network call lags.
   try {
-    await fetch('/api/last-watched', {
+    const cached = JSON.parse(localStorage.getItem('wt_history') || '{}');
+    cached[entry.videoId] = { ...entry, savedAt: Date.now() };
+    localStorage.setItem('wt_history', JSON.stringify(cached));
+  } catch(e) {}
+  try {
+    await fetch('/api/watch-history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(entry),
       signal: AbortSignal.timeout(5000),
     });
   } catch(e) {}
 }
 
-async function clearLastWatched() {
-  localStorage.removeItem('wt_last');
+async function deleteWatchEntry(videoId) {
   try {
-    await fetch('/api/last-watched', {
+    const cached = JSON.parse(localStorage.getItem('wt_history') || '{}');
+    delete cached[videoId];
+    localStorage.setItem('wt_history', JSON.stringify(cached));
+  } catch(e) {}
+  try {
+    await fetch(`/api/watch-history?videoId=${encodeURIComponent(videoId)}`, {
       method: 'DELETE',
       signal: AbortSignal.timeout(5000),
     });
   } catch(e) {}
+}
+
+function getContinueCandidate() {
+  let best = null;
+  for (const entry of Object.values(watchHistory || {})) {
+    if (!entry || !entry.videoId) continue;
+    if (!best || (entry.savedAt || 0) > (best.savedAt || 0)) best = entry;
+  }
+  return best;
 }
 
 // =============================================
@@ -694,8 +712,8 @@ let wakeLock = null;
 let currentChannel = null;
 let currentVideoId = null;
 let videoCache = {}; // channelId -> [videos]
-let lastWatched = null; // { videoId, title, channelId, channelName, position, duration, savedAt }
-let currentVideo = null; // last-touched video this session: { videoId, title, channelId, channelName, lastPosition, duration }
+let watchHistory = {}; // videoId -> { videoId, title, channelId, channelName, position, duration, savedAt }
+let currentVideo = null; // active video this session: { videoId, title, channelId, channelName, lastPosition, duration }
 
 // =============================================
 // DOM refs
@@ -729,18 +747,18 @@ function startSession() {
   timer.interval = setInterval(() => {
     timer.remaining = Math.max(0, timer.remaining - 1);
     updateTimerUI();
-    // Sample current player position so we can save it at time-up.
+    // Sample current player position; track max-seen so scrub-backs don't reduce our furthest mark.
     if (ytPlayer && currentVideo) {
       try {
         const pos = ytPlayer.getCurrentTime();
         const dur = ytPlayer.getDuration();
-        if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.floor(pos);
+        if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
         if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
       } catch(e) {}
     }
     if (timer.remaining <= 0) {
       stopSession();
-      saveSessionWatchpoint();
+      saveCurrentVideoProgress();
       onTimesUp();
     }
   }, 1000);
@@ -752,26 +770,30 @@ function stopSession() {
   releaseWakeLock();
 }
 
-function saveSessionWatchpoint() {
+function saveCurrentVideoProgress() {
   if (!currentVideo || !currentVideo.videoId) return;
-  // One last sample in case the player still has a fresher position.
+  // One last sample so we don't lose progress between the most recent 1-Hz tick and this call.
   if (ytPlayer) {
     try {
       const pos = ytPlayer.getCurrentTime();
       const dur = ytPlayer.getDuration();
-      if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.floor(pos);
+      if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
       if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
     } catch(e) {}
   }
   const { videoId, title, channelId, channelName, lastPosition, duration } = currentVideo;
-  const completed = duration > 0 && lastPosition / duration >= 0.95;
+  // If duration was never resolved (e.g., player wasn't ready), don't write a phantom entry —
+  // safer to lose the save than to persist position with no scale, which would render as a
+  // mystery resume with no progress strip.
+  if (!duration || duration <= 0) return;
+  const completed = lastPosition / duration >= 0.95;
   if (completed) {
-    lastWatched = null;
-    clearLastWatched();
-  } else {
-    const payload = { videoId, title, channelId, channelName, position: lastPosition || 0, duration: duration || 0 };
-    lastWatched = { ...payload, savedAt: Date.now() };
-    saveLastWatched(payload);
+    delete watchHistory[videoId];
+    deleteWatchEntry(videoId);
+  } else if (lastPosition > 0) {
+    const entry = { videoId, title, channelId, channelName, position: lastPosition, duration };
+    watchHistory[videoId] = { ...entry, savedAt: Date.now() };
+    saveWatchEntry(entry);
   }
 }
 
@@ -856,6 +878,7 @@ async function selectFeed(feed) {
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading videos...</div>`;
 
   if (feed === 'all') {
+    currentChannel = null;
     $('feedTitle').textContent = '🌈 All Channels';
     $('shuffleBtn').style.display = 'none';
     await loadAllFeeds();
@@ -954,7 +977,7 @@ function makeContinueCard(lw) {
     <div class="thumb-wrap">
       <img class="thumb" src="https://img.youtube.com/vi/${lw.videoId}/mqdefault.jpg" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
       <div class="continue-badge">▶ Continue at ${timeStr}</div>
-      <div class="continue-progress" style="width:${pct}%"></div>
+      <div class="watch-progress" style="width:${pct}%"></div>
     </div>
     <div class="info"><div class="title">${escHtml(lw.title || 'Continue watching')}</div></div>
   `;
@@ -975,22 +998,39 @@ function prependContinueCardIfAny() {
   // Idempotent: drop any existing continue card before deciding what to render.
   const existing = grid.querySelector('.continue-card');
   if (existing) existing.remove();
-  if (!lastWatched || !lastWatched.videoId) return;
-  // Hide the card if its source channel/playlist is no longer in the user's list.
-  if (lastWatched.channelId && !cfg.channels.some(c => c.id === lastWatched.channelId)) return;
-  grid.prepend(makeContinueCard(lastWatched));
+  const candidate = getContinueCandidate();
+  if (!candidate || !candidate.videoId) return;
+  // Hide if the source channel/playlist is no longer in the user's list.
+  if (candidate.channelId && !cfg.channels.some(c => c.id === candidate.channelId)) return;
+  grid.prepend(makeContinueCard(candidate));
 }
 
-function makeVideoCard(v) {
+function makeVideoCard(v, opts = {}) {
   const card = document.createElement('div');
   card.className = 'video-card';
+  const wh = watchHistory[v.videoId];
+  let progressBar = '';
+  if (wh && wh.duration > 0 && wh.position > 0) {
+    const pct = Math.min(100, Math.max(2, (wh.position / wh.duration) * 100));
+    progressBar = `<div class="watch-progress" style="width:${pct}%"></div>`;
+  }
+  const chLabel = (opts.showChannelName && v.channelName && (!currentChannel || v.channelId !== currentChannel.id))
+    ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>`
+    : '';
   card.innerHTML = `
-    <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
-    <div class="info"><div class="title">${escHtml(v.title)}</div></div>
+    <div class="thumb-wrap">
+      <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
+      ${progressBar}
+    </div>
+    <div class="info">
+      <div class="title">${escHtml(v.title)}</div>
+      ${chLabel}
+    </div>
   `;
   card.onclick = () => {
     if (!timer.running) startSession();
-    playVideo(v);
+    const resumeFrom = (watchHistory[v.videoId] && watchHistory[v.videoId].position) || 0;
+    playVideo(v, resumeFrom);
   };
   return card;
 }
@@ -1043,14 +1083,21 @@ function escHtml(str) {
 // =============================================
 function playVideo(v, startSeconds = 0) {
   if (timer.remaining <= 0) return;
+  // Save the outgoing video before we lose its state.
+  if (currentVideo && currentVideo.videoId !== v.videoId) {
+    saveCurrentVideoProgress();
+  }
   currentVideoId = v.videoId;
+  // Seed lastPosition with the larger of (where we're resuming from) and (max ever reached for this video),
+  // so re-tapping a card and scrubbing around can never reduce the furthest mark.
+  const priorMax = (watchHistory[v.videoId] && watchHistory[v.videoId].position) || 0;
   currentVideo = {
     videoId: v.videoId,
-    title: v.title || '',
+    title: v.title || (watchHistory[v.videoId] && watchHistory[v.videoId].title) || '',
     channelId: v.channelId || (currentChannel ? currentChannel.id : null),
     channelName: v.channelName || (currentChannel ? currentChannel.name : null),
-    lastPosition: Math.floor(startSeconds || 0),
-    duration: 0,
+    lastPosition: Math.max(Math.floor(startSeconds || 0), priorMax),
+    duration: (watchHistory[v.videoId] && watchHistory[v.videoId].duration) || 0,
   };
   showOnly('playerScreen');
 
@@ -1101,14 +1148,16 @@ function createPlayer(videoId, startSeconds = 0) {
           if (currentVideo && currentVideo.duration > 0) {
             currentVideo.lastPosition = currentVideo.duration;
           }
+          // Persist the deletion so the video resets to 0 on next watch (matters for playlist re-watches).
+          saveCurrentVideoProgress();
           if (timer.remaining > 0) showUpNext();
         }
       },
       onError: e => {
-        // 100 = not found, 101/150 = embedding not allowed. If the resume target itself errored, clear it.
-        if (lastWatched && currentVideoId === lastWatched.videoId && (e.data === 100 || e.data === 101 || e.data === 150)) {
-          lastWatched = null;
-          clearLastWatched();
+        // 100 = not found, 101/150 = embedding not allowed. If the resume target errored, drop its entry.
+        if (currentVideo && (e.data === 100 || e.data === 101 || e.data === 150)) {
+          delete watchHistory[currentVideo.videoId];
+          deleteWatchEntry(currentVideo.videoId);
         }
       },
     }
@@ -1162,19 +1211,7 @@ async function showUpNext() {
 
   grid.innerHTML = '';
   suggestions.forEach(v => {
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    const chLabel = v.channelId !== currentChannel?.id
-      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>` : '';
-    card.innerHTML = `
-      <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
-      <div class="info">
-        <div class="title">${escHtml(v.title)}</div>
-        ${chLabel}
-      </div>
-    `;
-    card.onclick = () => playVideo(v);
-    grid.appendChild(card);
+    grid.appendChild(makeVideoCard(v, { showChannelName: true }));
   });
 }
 
@@ -1245,8 +1282,18 @@ $('backBtn').onclick = () => {
   const current = !$('playerScreen').classList.contains('hidden') ? 'player' :
                   !$('upNextScreen').classList.contains('hidden') ? 'upNext' : null;
   if (current === 'player') {
+    saveCurrentVideoProgress();
     destroyPlayer();
     showOnly('browseScreen');
+    // Re-render from cache (no spinner flash) so the just-saved progress strip + continue card show up.
+    // renderRoundRobin / renderSingleFeed both call prependContinueCardIfAny internally.
+    if (selectedFeed === 'all') {
+      // Pre-decrement so the same number of videos re-renders (renderRoundRobin re-increments).
+      if (roundRobinIndex > 0) roundRobinIndex--;
+      renderRoundRobin();
+    } else if (cfg.channels[selectedFeed]) {
+      renderSingleFeed(cfg.channels[selectedFeed]);
+    }
   } else if (current === 'upNext') {
     showOnly('browseScreen');
   }
@@ -1506,18 +1553,22 @@ $('saveBtn').onclick = async () => {
   cfg.timerSeconds = t;
   cfg.pin = p;
   await saveConfig(cfg);
-  // If the saved continue-watching video belongs to a removed channel, clear it.
-  if (lastWatched && lastWatched.channelId && !cfg.channels.some(c => c.id === lastWatched.channelId)) {
-    lastWatched = null;
-    await clearLastWatched();
+  // Drop any watch-history entries whose source channel/playlist was removed.
+  const validIds = new Set(cfg.channels.map(c => c.id));
+  for (const vid of Object.keys(watchHistory)) {
+    const e = watchHistory[vid];
+    if (e && e.channelId && !validIds.has(e.channelId)) {
+      delete watchHistory[vid];
+      await deleteWatchEntry(vid);
+    }
   }
   $('saveBtn').textContent = 'Saved!';
   setTimeout(() => $('saveBtn').textContent = 'Save', 1500);
 };
 const exitSettings = async () => {
-  const [c, lw] = await Promise.all([loadConfig(), loadLastWatched()]);
+  const [c, wh] = await Promise.all([loadConfig(), loadWatchHistory()]);
   cfg = c;
-  lastWatched = lw;
+  watchHistory = wh || {};
   allVideosLoaded = false;
   videoCache = {};
   showOnly('browseScreen');
@@ -1541,13 +1592,17 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
 // =============================================
 (async () => {
   $('videoGrid').innerHTML = `<div class="video-loading"><div class="spinner"></div><br>Loading...</div>`;
-  const [c, lw] = await Promise.all([loadConfig(), loadLastWatched()]);
+  const [c, wh] = await Promise.all([loadConfig(), loadWatchHistory()]);
   cfg = c;
-  lastWatched = lw;
-  // Purge a cached resume entry whose channel was removed in another session.
-  if (lastWatched && lastWatched.channelId && !cfg.channels.some(ch => ch.id === lastWatched.channelId)) {
-    lastWatched = null;
-    clearLastWatched();
+  watchHistory = wh || {};
+  // Drop any entries whose source channel/playlist was removed in another session.
+  const validIds = new Set(cfg.channels.map(ch => ch.id));
+  for (const vid of Object.keys(watchHistory)) {
+    const e = watchHistory[vid];
+    if (e && e.channelId && !validIds.has(e.channelId)) {
+      delete watchHistory[vid];
+      deleteWatchEntry(vid);
+    }
   }
   // Shuffle channel order each session for variety
   for (let i = cfg.channels.length - 1; i > 0; i--) {
