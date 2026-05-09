@@ -1002,12 +1002,17 @@ function prependContinueCardIfAny() {
   if (!candidate || !candidate.videoId) return;
   // Hide if the source channel/playlist is no longer in the user's list.
   if (candidate.channelId && !cfg.channels.some(c => c.id === candidate.channelId)) return;
+  // De-dupe: if the same video already appears as a regular card in the grid, remove it
+  // so the continue card is the only copy.
+  const dupe = grid.querySelector(`.video-card[data-video-id="${CSS.escape(candidate.videoId)}"]`);
+  if (dupe) dupe.remove();
   grid.prepend(makeContinueCard(candidate));
 }
 
 function makeVideoCard(v, opts = {}) {
   const card = document.createElement('div');
   card.className = 'video-card';
+  card.dataset.videoId = v.videoId;
   const wh = watchHistory[v.videoId];
   let progressBar = '';
   if (wh && wh.duration > 0 && wh.position > 0) {
