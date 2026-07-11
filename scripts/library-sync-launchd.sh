@@ -8,9 +8,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-# node on this machine is managed by Hermes (~/.hermes/node), which is not on
-# launchd's bare PATH -- resolve it explicitly rather than relying on `env
-# node`. (yt-dlp/ffmpeg PATH is handled inside library-sync.mjs itself.)
-NODE_BIN="/Users/davidhague/.hermes/node/bin/node"
+# node on this machine is managed by Hermes and not on launchd's bare PATH --
+# resolve it via the stable ~/.local/bin/node symlink (which tracks Hermes
+# internals) rather than hardcoding Hermes's private layout.
+# (yt-dlp/ffmpeg PATH is handled inside library-sync.mjs itself.)
+NODE_BIN="$HOME/.local/bin/node"
 
 exec "$NODE_BIN" scripts/library-sync.mjs "$@"
