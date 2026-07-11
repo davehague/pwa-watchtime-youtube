@@ -782,7 +782,7 @@ vercel --prod
 
 ---
 
-### Task 9: Fire 7 — Capacitor Filesystem adapter + APK (Phase 3)
+### Task 9: Fire 7 — Capacitor Filesystem adapter + APK (Phase 3) — NOT NEEDED (2026-07-11: Fire runs the PWA; Silk's OPFS + service worker passed the field test, so the native APK path is retired)
 
 > **ON HOLD (2026-07-11):** not started. David wants to test whether the plain PWA (already
 > working on iPhone) is good enough on the Fire 7 tablet before reviving the Capacitor
