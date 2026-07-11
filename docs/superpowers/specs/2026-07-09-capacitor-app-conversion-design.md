@@ -133,6 +133,26 @@ in code but is missing from CLAUDE.md — document it during implementation.
 1. **YouTube playback in WKWebView** — autoplay/unmute policies differ from
    Safari. Make-or-break; implementation step 1 is a bare Capacitor shell
    playing a YouTube video before any other investment.
+
+   **2026-07-10 GATE RESULT: FAILED on iOS — project direction paused.**
+   iOS simulator spike: app boots, grid loads (CORS + API_BASE verified
+   end-to-end), tap starts the session timer, but the embed dies with
+   **error 153** ("Video player configuration error") — YouTube's
+   referrer enforcement rejecting the `capacitor://localhost` origin.
+   Persisted after adding `origin` + `widget_referrer` playerVars
+   (fallback a). Fixing it requires a remotely-hosted player page or a
+   native player plugin — at which point David paused the productization
+   direction entirely (see below). Android (`https://localhost` origin)
+   was never tested and may not share the problem.
+
+   **Status of this spec:** Tasks 1–3 of the implementation plan are
+   complete, reviewed, and committed on branch `capacitor-app` (CORS,
+   IS_NATIVE/API_BASE plumbing, Capacitor scaffold, .vercelignore).
+   Tasks 4–10 are abandoned for now. Next direction under discussion:
+   offline-first videos via a nightly yt-dlp job on the home Mac serving
+   local files (kills the embed problem entirely — `<video>` tag, no
+   YouTube at watch time). Personal/family use only; incompatible with
+   app-store distribution by design.
 2. **Amazon Kids profile** — confirm a sideloaded app can be launched from
    the kid profile on the Fire 7 (needs on-device verification).
 3. **Apple Developer enrollment** — takes a day or two; start early.
