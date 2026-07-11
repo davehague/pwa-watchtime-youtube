@@ -726,6 +726,7 @@ function getContinueCandidate() {
 let timer = { remaining: 0, total: 0, interval: null, running: false };
 let pinState = { buffer: '', callback: null };
 let ytPlayer = null;
+let localVideoEl = null;
 let ytReady = false;
 let wakeLock = null;
 let currentChannel = null;
@@ -767,13 +768,10 @@ function startSession() {
     timer.remaining = Math.max(0, timer.remaining - 1);
     updateTimerUI();
     // Sample current player position; track max-seen so scrub-backs don't reduce our furthest mark.
-    if (ytPlayer && currentVideo) {
-      try {
-        const pos = ytPlayer.getCurrentTime();
-        const dur = ytPlayer.getDuration();
-        if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
-        if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
-      } catch(e) {}
+    const st = getPlaybackState();
+    if (st && currentVideo) {
+      if (st.pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(st.pos));
+      if (st.dur > 0) currentVideo.duration = Math.floor(st.dur);
     }
     if (timer.remaining <= 0) {
       stopSession();
@@ -792,13 +790,10 @@ function stopSession() {
 function saveCurrentVideoProgress() {
   if (!currentVideo || !currentVideo.videoId) return;
   // One last sample so we don't lose progress between the most recent 1-Hz tick and this call.
-  if (ytPlayer) {
-    try {
-      const pos = ytPlayer.getCurrentTime();
-      const dur = ytPlayer.getDuration();
-      if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
-      if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
-    } catch(e) {}
+  const st = getPlaybackState();
+  if (st) {
+    if (st.pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(st.pos));
+    if (st.dur > 0) currentVideo.duration = Math.floor(st.dur);
   }
   const { videoId, title, channelId, channelName, lastPosition, duration } = currentVideo;
   // If duration was never resolved (e.g., player wasn't ready), don't write a phantom entry —
@@ -1038,6 +1033,9 @@ function makeVideoCard(v, opts = {}) {
     const pct = Math.min(100, Math.max(2, (wh.position / wh.duration) * 100));
     progressBar = `<div class="watch-progress" style="width:${pct}%"></div>`;
   }
+  const offBadge = (offlineEnabled() && libIds.has(v.videoId))
+    ? '<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);border-radius:8px;padding:2px 6px;font-size:11px;">⬇</div>'
+    : '';
   const chLabel = (opts.showChannelName && v.channelName && (!currentChannel || v.channelId !== currentChannel.id))
     ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>`
     : '';
@@ -1045,6 +1043,7 @@ function makeVideoCard(v, opts = {}) {
     <div class="thumb-wrap">
       <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
       ${progressBar}
+      ${offBadge}
     </div>
     <div class="info">
       <div class="title">${escHtml(v.title)}</div>
@@ -1105,6 +1104,35 @@ function escHtml(str) {
 // =============================================
 // PLAYER
 // =============================================
+function getPlaybackState() {
+  if (localVideoEl) {
+    return { pos: localVideoEl.currentTime || 0, dur: localVideoEl.duration || 0 };
+  }
+  if (ytPlayer) {
+    try { return { pos: ytPlayer.getCurrentTime() || 0, dur: ytPlayer.getDuration() || 0 }; } catch(e) {}
+  }
+  return null;
+}
+
+async function playLocalVideo(v, startSeconds) {
+  const url = await libStore.fileUrl(`${v.videoId}.mp4`);
+  $('playerWrapper').innerHTML = '<video id="localPlayer" playsinline autoplay style="width:100%;height:100%;background:#000;"></video><div class="player-shield"></div>';
+  localVideoEl = document.getElementById('localPlayer');
+  localVideoEl.src = url;
+  // Seek only once metadata is ready — Safari ignores currentTime set before loadedmetadata.
+  if (startSeconds > 0) {
+    localVideoEl.addEventListener('loadedmetadata', () => {
+      localVideoEl.currentTime = Math.floor(startSeconds);
+    }, { once: true });
+  }
+  localVideoEl.onended = () => {
+    if (currentVideo && currentVideo.duration > 0) currentVideo.lastPosition = currentVideo.duration;
+    saveCurrentVideoProgress();
+    if (timer.remaining > 0) showUpNext();
+  };
+  localVideoEl.play().catch(() => {});
+}
+
 function playVideo(v, startSeconds = 0) {
   if (timer.remaining <= 0) return;
   // Save the outgoing video before we lose its state.
@@ -1125,13 +1153,15 @@ function playVideo(v, startSeconds = 0) {
   };
   showOnly('playerScreen');
 
-  // Destroy existing player
-  if (ytPlayer) {
-    try { ytPlayer.destroy(); } catch(e) {}
-    ytPlayer = null;
-  }
+  // Tear down whichever player was active.
+  if (ytPlayer) { try { ytPlayer.destroy(); } catch(e) {} ytPlayer = null; }
+  if (localVideoEl) { try { if (localVideoEl.src.startsWith('blob:')) URL.revokeObjectURL(localVideoEl.src); } catch(e) {} localVideoEl = null; }
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
 
+  if (offlineEnabled() && libIds.has(v.videoId)) {
+    playLocalVideo(v, startSeconds);
+    return;
+  }
   if (ytReady) {
     createPlayer(v.videoId, startSeconds);
   } else {
@@ -1282,12 +1312,24 @@ function destroyPlayer() {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
   }
+  if (localVideoEl) {
+    try {
+      localVideoEl.pause();
+      if (localVideoEl.src.startsWith('blob:')) URL.revokeObjectURL(localVideoEl.src);
+    } catch(e) {}
+    localVideoEl = null;
+  }
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield" id="playerShield"></div>';
 }
 
 // Tap shield to toggle play/pause
 $('playerWrapper').addEventListener('click', (e) => {
-  if (e.target.classList.contains('player-shield') && ytPlayer) {
+  if (!e.target.classList.contains('player-shield')) return;
+  if (localVideoEl) {
+    localVideoEl.paused ? localVideoEl.play() : localVideoEl.pause();
+    return;
+  }
+  if (ytPlayer) {
     try {
       const state = ytPlayer.getPlayerState();
       if (state === YT.PlayerState.PLAYING) {
@@ -1504,7 +1546,7 @@ async function syncLibrary(onStatus) {
   }
 
   await refreshLibIds();
-  localStorage.setItem('wt_lib_synced_at', String(Date.now()));
+  try { localStorage.setItem('wt_lib_synced_at', String(Date.now())); } catch (e) {}
   onStatus(failed === 0 ? 'Up to date ✓' : `⚠ Synced with ${failed} failed — old videos kept`);
 }
 
