@@ -579,6 +579,19 @@
   </div>
 
   <div class="s-group">
+    <h3>Offline Library (this device only)</h3>
+    <div class="s-row">
+      <span class="label">Enable offline videos</span>
+      <input type="checkbox" id="offlineToggle" style="width:auto;margin:0;transform:scale(1.4);">
+    </div>
+    <div id="offlinePanel" class="hidden">
+      <button class="btn btn-primary btn-block" id="syncBtn" style="margin:6px 0;">⬇ Sync now</button>
+      <div class="s-hint" id="syncStatus">Not synced yet</div>
+      <div class="s-hint" id="syncUsage"></div>
+    </div>
+  </div>
+
+  <div class="s-group">
     <h3>Channels</h3>
     <div id="settingsChannelList"></div>
     <hr style="border-color:var(--border); margin:10px 0">
@@ -603,6 +616,9 @@
 
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const API_BASE = IS_NATIVE ? 'https://pwa-watchtime-youtube.vercel.app' : '';
+const LIB_BASE = 'https://iacel7bq0buwt6bn.public.blob.vercel-storage.com';
+const MANIFEST_URL = LIB_BASE + '/manifest.json';
+const offlineEnabled = () => localStorage.getItem('wt_offline_enabled') === '1';
 
 const DEFAULT_CONFIG = {
   pin: '1234',
@@ -1408,8 +1424,28 @@ function openSettings() {
   $('setTimer').value = cfg.timerSeconds;
   $('setPin').value = cfg.pin;
   renderSettingsChannels();
+  renderOfflinePanel();
   showOnly('settingsScreen');
 }
+
+function renderOfflinePanel() {
+  $('offlineToggle').checked = offlineEnabled();
+  $('offlinePanel').classList.toggle('hidden', !offlineEnabled());
+  const at = +localStorage.getItem('wt_lib_synced_at') || 0;
+  $('syncStatus').textContent = at ? `Last synced ${new Date(at).toLocaleString()}` : 'Not synced yet';
+  if (offlineEnabled()) updateSyncUsage();
+}
+async function updateSyncUsage() {
+  try {
+    const n = (await libStore.names()).filter(x => x.endsWith('.mp4')).length;
+    const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+    $('syncUsage').textContent = `${n} videos on device` + (est ? ` · ${(est.usage / 1e9).toFixed(2)} GB used` : '');
+  } catch(e) { $('syncUsage').textContent = ''; }
+}
+$('offlineToggle').onchange = function() {
+  localStorage.setItem('wt_offline_enabled', this.checked ? '1' : '0');
+  renderOfflinePanel();
+};
 
 function renderSettingsChannels() {
   const el = $('settingsChannelList');
