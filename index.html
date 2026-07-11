@@ -1571,6 +1571,7 @@ async function syncLibrary(onStatus) {
 
   let failed = 0;
   let done = 0;
+  const have = new Set(await libStore.names());
   for (const v of manifest.videos) {
     done++;
     const label = `${done}/${manifest.videos.length} ${v.title.slice(0, 40)}`;
@@ -1583,6 +1584,9 @@ async function syncLibrary(onStatus) {
         failed++;
         onStatus(`⚠ ${label} failed, continuing`);
       }
+    } else if (v.thumbUrl && !have.has(`${v.videoId}.jpg`)) {
+      // Repair thumbs for videos synced under an older/interrupted manifest.
+      await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
     }
   }
 
