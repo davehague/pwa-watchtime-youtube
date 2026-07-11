@@ -1069,9 +1069,12 @@ $('videoPanel').addEventListener('scroll', () => {
   if (selectedFeed !== 'all') return;
   const panel = $('videoPanel');
   if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 200) {
-    const prevCount = $('videoGrid').children.length;
+    // Skip the rebuild when every available video is already shown —
+    // rebuilding anyway makes the grid visibly flash (noticeable in
+    // library mode where feeds are small).
+    const showing = $('videoGrid').querySelectorAll('.video-card:not(.continue-card)').length;
+    if (showing >= getRoundRobinVideos(Infinity).length) return;
     renderRoundRobin();
-    // If no new videos were added, we've exhausted all feeds
   }
 });
 
