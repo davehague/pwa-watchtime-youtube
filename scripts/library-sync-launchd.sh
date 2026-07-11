@@ -1,0 +1,16 @@
+#!/bin/bash
+# launchd entrypoint for the nightly WatchTime library sync.
+#
+# Invoked by launchd via scripts-and-agents/scripts/launchd_wrapper.sh
+# (job label: watchtime-library-sync), which handles logging, Slack
+# notifications, retries, and timeout -- this script only needs to get
+# `node scripts/library-sync.mjs` running with the right PATH/cwd.
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+# node on this machine is managed by Hermes (~/.hermes/node), which is not on
+# launchd's bare PATH -- resolve it explicitly rather than relying on `env
+# node`. (yt-dlp/ffmpeg PATH is handled inside library-sync.mjs itself.)
+NODE_BIN="/Users/davidhague/.hermes/node/bin/node"
+
+exec "$NODE_BIN" scripts/library-sync.mjs "$@"
