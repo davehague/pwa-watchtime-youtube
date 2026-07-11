@@ -64,3 +64,23 @@ In settings (gear icon, PIN required), paste any of these formats:
 - `https://www.youtube.com/playlist?list=PLxxxxxxx`
 
 The app resolves `@handles` to channel IDs automatically and fetches the channel's profile picture. Playlists use the YouTube Data API to fetch all items and show a random 10 per session.
+
+## Offline videos (car trips)
+
+Kid videos can be available with no internet connection — handy for the car. A nightly job on
+David's Mac curates a small library (a few short videos per channel/playlist, filtered to
+kid-safe length, live streams excluded) and uploads it to Vercel Blob storage.
+
+To use it on a device:
+
+1. Open settings (PIN required) and turn on **Enable offline videos**.
+2. Tap **Sync now** on Wi-Fi, ideally the night before a trip — this downloads the current
+   library to that device.
+3. From then on, that device works offline: it boots straight into the synced video library
+   when there's no connection, and plays synced videos locally (faster, no ads) even when
+   online.
+
+The offline library is **opt-in per device** — it's a setting stored on the device itself, not
+part of the shared channel/timer/PIN config, so turning it on for one tablet doesn't change the
+experience on anyone else's phone. Devices that never flip the toggle behave exactly as
+described above with no offline behavior at all.

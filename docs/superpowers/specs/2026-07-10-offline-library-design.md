@@ -146,3 +146,54 @@ above all — the experience on any device that never enables the toggle.
 - Transcoding pipeline beyond yt-dlp's format selection (no ffmpeg
   post-processing unless a target device refuses a file).
 - Auto-rotation of playlist picks beyond watched-replacement.
+
+## As built (2026-07-11)
+
+Tasks 0–8 shipped and are live in production; Task 9 (Fire native/Capacitor Filesystem
+adapter + APK) is on hold pending a test of the plain PWA on the Fire tablet. The
+implementation diverged from this design in a few places, all discovered during build-and-
+verify rather than planned up front:
+
+- **Curation window widened, resolution came down.** Originally 3 picks/feed at 720p. Shipped
+  as **5 picks/feed** (`PER_FEED` in `scripts/library-sync.mjs`) at **480p**
+  (`bv*[height<=480][vcodec^=avc1]+ba[acodec^=mp4a]`), with a duration window of
+  **120–600 seconds** (`MIN_DURATION_SEC`/`MAX_DURATION_SEC`) that also serves as the
+  live/premiere filter (entries with missing/zero duration are dropped as live/unparseable).
+  The resolution drop paid for the extra picks/feed at a similar or smaller per-run download
+  size. A **min-1-per-feed fallback** was added: if nothing falls inside the duration window,
+  the feed's single shortest eligible video is used even if it's over the max — so a feed never
+  contributes zero videos.
+- **Playlist "watched" retirement generalized to "retired."** The original design retired a
+  playlist pick only when it was watched to completion. The shipped version also retires a pick
+  when the IFrame player reports it unplayable (age-gated/removed/embed-disabled — error 100,
+  101, or 150) or when its channel/playlist is removed from config — all three delete the same
+  watch-history entry client-side, so the downloader can't distinguish them and correctly
+  doesn't try to.
+- **Sync engine gained three behaviors beyond the original diff-and-download:**
+  - **Download-first, evict-last-and-only-on-success**: the original sketch deleted stale
+    local files up front, then downloaded. The shipped `syncLibrary()` downloads/updates first
+    and only evicts obsolete local files if the whole sync had zero failures — a partial
+    failure now leaves old content in place rather than risking a car-trip device ending up
+    with less than it started with.
+  - **Thumb repair**: if a video's `.mp4` is already present but its `.jpg` thumbnail is
+    missing (interrupted or older sync), the thumbnail is fetched on the next sync without
+    re-downloading the video.
+  - **Size-change replacement**: if a locally-present video's file size no longer matches the
+    manifest's `size` field, the sync treats that as a content change (e.g. a server
+    re-encode) and re-downloads it.
+- **Local player hardened for iOS.** Two things not in the original design: a
+  `playerGeneration` counter guards against a slow async `libStore.fileUrl()` resolving after
+  the user has already navigated away (stale continuation), and `unloadLocalVideo()`
+  (pause → clear `src` → `load()`) is now required whenever a local `<video>` element is torn
+  down — iOS WebKit was found to hold the decode pipeline of a discarded element, leaving the
+  *next* local video stuck at readyState 0 (black screen) without it.
+- **Offline-boot reachability check simplified.** The design called for a dedicated HEAD probe
+  to `/api/config` to decide online/offline at boot. The shipped version reuses the boolean
+  `configFromServer` that `loadConfig()` already sets when its own `/api/config` fetch
+  succeeds — one fewer network round-trip, same signal.
+- **Scroll-exhaustion guard added.** The infinite-scroll handler now skips rebuilding the video
+  grid once every available video is already rendered (`getRoundRobinVideos(Infinity).length`)
+  — avoids a visible flash, most noticeable in library mode where feeds are small.
+- **Usage readout sums real file sizes**, not a storage-quota estimate: the settings panel's
+  "N videos on device · X.XX GB" line comes from `libStore.usage()` walking the OPFS directory,
+  not `navigator.storage.estimate()`.

@@ -20,7 +20,7 @@ The `capacitor-app` branch holds completed, reviewed, production-deployed work (
 
 **Files:** none (git only)
 
-- [ ] **Step 1: Merge and branch**
+- [x] **Step 1: Merge and branch**
 
 ```bash
 cd /Users/davidhague/source/pwa-watchtime-youtube
@@ -31,7 +31,7 @@ git checkout -b offline-library
 
 Expected: clean merge (main has no divergent commits), new branch `offline-library`.
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 ```bash
 git log --oneline -3 && git branch --show-current
@@ -47,7 +47,7 @@ Expected: merge commit on top, branch `offline-library`.
 - Create: `scripts/library-config.json` (public base URL — not a secret)
 - Modify: `.env.local` (gains `BLOB_READ_WRITE_TOKEN` via `vercel env pull` — never committed)
 
-- [ ] **Step 1: Create the Blob store and connect it to this project**
+- [x] **Step 1: Create the Blob store and connect it to this project**
 
 ```bash
 npx vercel blob store add watchtime-library
@@ -55,7 +55,7 @@ npx vercel blob store add watchtime-library
 
 Follow the CLI prompts to connect it to the linked project (`pwa-watchtime-youtube`). If the CLI version doesn't support store creation, report BLOCKED with instructions for David: Vercel dashboard → Storage → Create → Blob → name `watchtime-library` → Connect to project.
 
-- [ ] **Step 2: Pull the token locally**
+- [x] **Step 2: Pull the token locally**
 
 ```bash
 npx vercel env pull .env.local
@@ -64,7 +64,7 @@ grep -c "BLOB_READ_WRITE_TOKEN" .env.local
 
 Expected: `1`.
 
-- [ ] **Step 3: Discover the store's public base URL and record it**
+- [x] **Step 3: Discover the store's public base URL and record it**
 
 ```bash
 node --input-type=module -e "
@@ -85,7 +85,7 @@ console.log(b.url);
 }
 ```
 
-- [ ] **Step 4: Verify public access + CORS (the PWA depends on this)**
+- [x] **Step 4: Verify public access + CORS (the PWA depends on this)**
 
 ```bash
 curl -sI "<blobBaseUrl>/probe.txt" | grep -iE "access-control-allow-origin|content-type|accept-ranges"
@@ -93,7 +93,7 @@ curl -sI "<blobBaseUrl>/probe.txt" | grep -iE "access-control-allow-origin|conte
 
 Expected: `access-control-allow-origin: *` present. If the CORS header is absent, STOP and report BLOCKED — the whole device-sync design assumes public blobs are CORS-readable; the controller must revisit serving before Phase 2.
 
-- [ ] **Step 5: Clean up probe, commit**
+- [x] **Step 5: Clean up probe, commit**
 
 ```bash
 node --input-type=module -e "
@@ -115,7 +115,7 @@ git commit -m "Add Vercel Blob store config for offline library"
 
 The complete script. Selection rules from the spec: channels → newest 3 from `/videos` tab (Shorts-free by construction); playlists → 3 persistent picks, replaced only when the pick disappears upstream, is detected watched-to-completion (was in watch-history last run, absent now), or `--rotate` is passed.
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 ```js
 #!/usr/bin/env node
@@ -304,7 +304,7 @@ async function main() {
 main().catch(e => { console.error('FATAL', e); process.exit(1); });
 ```
 
-- [ ] **Step 2: Syntax check + dry run**
+- [x] **Step 2: Syntax check + dry run**
 
 ```bash
 node --check scripts/library-sync.mjs
@@ -314,7 +314,7 @@ node scripts/library-sync.mjs --dry-run
 
 Expected: dry run logs yt-dlp version, prints ~9 selected videos (3 per configured feed) as JSON, uploads nothing. Feed listing failures print `FEED FAILED` but don't crash.
 
-- [ ] **Step 3: First real run**
+- [x] **Step 3: First real run**
 
 ```bash
 node scripts/library-sync.mjs
@@ -329,11 +329,11 @@ curl -sI "$(node -p "JSON.parse(require('fs').readFileSync('scripts/library-conf
 
 Expected: video count ≥ 1 with real title/URL; manifest cache-control max-age=60. Spot-check one video URL with `curl -sI` → `200`, `content-type: video/mp4`, `accept-ranges: bytes`.
 
-- [ ] **Step 4: Idempotency check**
+- [x] **Step 4: Idempotency check**
 
 Re-run `node scripts/library-sync.mjs`. Expected: no re-downloads (files exist), no re-uploads (`existing` map hits), same manifest count, `done`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/library-sync.mjs
@@ -348,7 +348,7 @@ git commit -m "Add nightly library downloader: yt-dlp -> Vercel Blob + manifest"
 - Create: `~/Library/LaunchAgents/com.davidhague.watchtime-library.plist` (outside repo)
 - Create: `scripts/library-sync-launchd.sh` (repo — wrapper so launchd has env + logging)
 
-- [ ] **Step 1: Wrapper script**
+- [x] **Step 1: Wrapper script**
 
 ```bash
 #!/usr/bin/env bash
@@ -363,7 +363,7 @@ echo "exit=$? $(date -u +%FT%TZ)" >> "$LOG"
 
 `chmod +x scripts/library-sync-launchd.sh`
 
-- [ ] **Step 2: launchd plist** (write to `~/Library/LaunchAgents/com.davidhague.watchtime-library.plist`)
+- [x] **Step 2: launchd plist** (write to `~/Library/LaunchAgents/com.davidhague.watchtime-library.plist`)
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -384,7 +384,7 @@ echo "exit=$? $(date -u +%FT%TZ)" >> "$LOG"
 
 Load: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.davidhague.watchtime-library.plist` (if already loaded, `launchctl bootout` first).
 
-- [ ] **Step 3: Kick a manual run through launchd and verify**
+- [x] **Step 3: Kick a manual run through launchd and verify**
 
 ```bash
 launchctl kickstart gui/$(id -u)/com.davidhague.watchtime-library
@@ -393,11 +393,11 @@ sleep 90 && tail -5 ~/WatchTime-Library/logs/$(date +%Y-%m-%d).log
 
 Expected: log ends with `done` and `exit=0` (fast because idempotent).
 
-- [ ] **Step 4: Register in the jobs dashboard**
+- [x] **Step 4: Register in the jobs dashboard**
 
 If `~/source/local-dashboard` exists and has a jobs registry (`jobs.yml` or similar), add an entry for `com.davidhague.watchtime-library` (nightly 03:30, log path above) following the registry's existing format; otherwise note in the report that David should run his `/local-dashboard-update` flow.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/library-sync-launchd.sh
@@ -411,7 +411,7 @@ git commit -m "Add launchd wrapper for nightly library sync"
 **Files:**
 - Modify: `index.html` (settings screen markup + JS)
 
-- [ ] **Step 1: Constants** — in the CONFIG section of `index.html`, directly under the `API_BASE` line, add (substituting the real base URL from `scripts/library-config.json`):
+- [x] **Step 1: Constants** — in the CONFIG section of `index.html`, directly under the `API_BASE` line, add (substituting the real base URL from `scripts/library-config.json`):
 
 ```js
 const LIB_BASE = 'https://<store-id>.public.blob.vercel-storage.com';
@@ -419,7 +419,7 @@ const MANIFEST_URL = LIB_BASE + '/manifest.json';
 const offlineEnabled = () => localStorage.getItem('wt_offline_enabled') === '1';
 ```
 
-- [ ] **Step 2: Settings markup** — in the settings screen, after the `s-group` div containing "Parent PIN" and before the "Channels" group, add:
+- [x] **Step 2: Settings markup** — in the settings screen, after the `s-group` div containing "Parent PIN" and before the "Channels" group, add:
 
 ```html
 <div class="s-group">
@@ -436,7 +436,7 @@ const offlineEnabled = () => localStorage.getItem('wt_offline_enabled') === '1';
 </div>
 ```
 
-- [ ] **Step 3: Wire the toggle** — in the settings JS (near `openSettings`), add:
+- [x] **Step 3: Wire the toggle** — in the settings JS (near `openSettings`), add:
 
 ```js
 function renderOfflinePanel() {
@@ -461,11 +461,11 @@ $('offlineToggle').onchange = function() {
 
 and call `renderOfflinePanel();` inside `openSettings()` after `renderSettingsChannels();`. (`libStore` arrives in Task 5; until then Step 4's verification only covers the toggle row.)
 
-- [ ] **Step 4: Verify invariant + no web regression**
+- [x] **Step 4: Verify invariant + no web regression**
 
 With `vercel dev`: settings shows the new group; toggle off (default) hides the panel; nothing else in the app changes (grid/player untouched — grep that `wt_offline_enabled` is only read via `offlineEnabled()` and only used in settings so far). `node --check` on the extracted inline script passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add index.html && git commit -m "Add per-device offline library toggle in PIN-gated settings"
@@ -478,7 +478,7 @@ git add index.html && git commit -m "Add per-device offline library toggle in PI
 **Files:**
 - Modify: `index.html`
 
-- [ ] **Step 1: Adapter + in-memory index** — add a new `// OFFLINE LIBRARY` section in the JS before the `// SETTINGS` section:
+- [x] **Step 1: Adapter + in-memory index** — add a new `// OFFLINE LIBRARY` section in the JS before the `// SETTINGS` section:
 
 ```js
 let libIds = new Set(); // videoIds present on this device
@@ -530,7 +530,7 @@ async function refreshLibIds() {
 }
 ```
 
-- [ ] **Step 2: Sync engine** (same section):
+- [x] **Step 2: Sync engine** (same section):
 
 ```js
 async function syncLibrary(onStatus) {
@@ -560,7 +560,7 @@ async function syncLibrary(onStatus) {
 }
 ```
 
-- [ ] **Step 3: Wire the Sync button** (in the settings JS from Task 4):
+- [x] **Step 3: Wire the Sync button** (in the settings JS from Task 4):
 
 ```js
 $('syncBtn').onclick = async () => {
@@ -581,9 +581,9 @@ Also call `refreshLibIds().catch(() => {})` when offline is enabled, inside the 
 if (offlineEnabled()) refreshLibIds().catch(() => {});
 ```
 
-- [ ] **Step 4: Verify in a desktop browser** (Chrome supports OPFS; `vercel dev`): enable toggle in settings → Sync now → status advances per video → "Up to date ✓" → usage line shows N videos. DevTools → Application → Storage shows OPFS `library/` entries. Re-click Sync → completes in ~1s (no re-downloads). Disable network (DevTools offline) → Sync shows `⚠ Could not reach library` and existing files remain.
+- [x] **Step 4: Verify in a desktop browser** (Chrome supports OPFS; `vercel dev`): enable toggle in settings → Sync now → status advances per video → "Up to date ✓" → usage line shows N videos. DevTools → Application → Storage shows OPFS `library/` entries. Re-click Sync → completes in ~1s (no re-downloads). Disable network (DevTools offline) → Sync shows `⚠ Could not reach library` and existing files remain.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add index.html && git commit -m "Add OPFS storage adapter and library sync engine"
@@ -596,7 +596,7 @@ git add index.html && git commit -m "Add OPFS storage adapter and library sync e
 **Files:**
 - Modify: `index.html`
 
-- [ ] **Step 1: Position-sampling abstraction** — `startSession()`'s interval and `saveCurrentVideoProgress()` both read `ytPlayer` directly today. Add near the player code:
+- [x] **Step 1: Position-sampling abstraction** — `startSession()`'s interval and `saveCurrentVideoProgress()` both read `ytPlayer` directly today. Add near the player code:
 
 ```js
 let localVideoEl = null;
@@ -623,7 +623,7 @@ Replace the sampling block inside `startSession()`'s interval:
 
 and the equivalent block at the top of `saveCurrentVideoProgress()` (same replacement, using `getPlaybackState()` instead of direct `ytPlayer` access).
 
-- [ ] **Step 2: Local player** — add alongside `createPlayer`:
+- [x] **Step 2: Local player** — add alongside `createPlayer`:
 
 ```js
 async function playLocalVideo(v, startSeconds) {
@@ -683,7 +683,7 @@ $('playerWrapper').addEventListener('click', (e) => {
 });
 ```
 
-- [ ] **Step 3: ⬇ badge on cards** — in `makeVideoCard`, after the `progressBar` computation add:
+- [x] **Step 3: ⬇ badge on cards** — in `makeVideoCard`, after the `progressBar` computation add:
 
 ```js
   const offBadge = (offlineEnabled() && libIds.has(v.videoId))
@@ -693,9 +693,9 @@ $('playerWrapper').addEventListener('click', (e) => {
 
 and include `${offBadge}` inside the `thumb-wrap` div in the card's innerHTML.
 
-- [ ] **Step 4: Verify** (desktop Chrome, `vercel dev`, toggle ON, library synced from Task 5): synced cards show ⬇; tapping one plays instantly via `<video>` (check DevTools: no youtube.com iframe created); shield tap pauses/resumes; leaving with Back records progress (progress strip appears; Continue card resumes at position through the LOCAL player); video end → Up Next. Toggle OFF → same card plays via YouTube embed exactly as before (wife-invariant at the player level). `node --check` passes.
+- [x] **Step 4: Verify** (desktop Chrome, `vercel dev`, toggle ON, library synced from Task 5): synced cards show ⬇; tapping one plays instantly via `<video>` (check DevTools: no youtube.com iframe created); shield tap pauses/resumes; leaving with Back records progress (progress strip appears; Continue card resumes at position through the LOCAL player); video end → Up Next. Toggle OFF → same card plays via YouTube embed exactly as before (wife-invariant at the player level). `node --check` passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add index.html && git commit -m "Play synced videos through local <video> path with offline badges"
@@ -708,7 +708,7 @@ git add index.html && git commit -m "Play synced videos through local <video> pa
 **Files:**
 - Modify: `index.html`
 
-- [ ] **Step 1: Library mode flag + fetchVideos override** — add at the top of `fetchVideos`:
+- [x] **Step 1: Library mode flag + fetchVideos override** — add at the top of `fetchVideos`:
 
 ```js
 let libraryMode = false;
@@ -730,7 +730,7 @@ async function fetchVideos(channelId) {
 
 (`fileUrl` rejects for missing thumbs; `.catch(() => '')` keeps the card with the surface-colored fallback that `onerror` already provides.)
 
-- [ ] **Step 2: Enter library mode on offline boot** — in the init IIFE, after `watchHistory = wh || {};` and the existing `if (offlineEnabled()) refreshLibIds()` line (make the refresh awaited now), decide the mode:
+- [x] **Step 2: Enter library mode on offline boot** — in the init IIFE, after `watchHistory = wh || {};` and the existing `if (offlineEnabled()) refreshLibIds()` line (make the refresh awaited now), decide the mode:
 
 ```js
   if (offlineEnabled()) {
@@ -751,9 +751,9 @@ async function fetchVideos(channelId) {
 
 (`cfg` at that point is the localStorage-cached config — available offline since `loadConfig` already falls back. Filtering channels hides feeds with no offline content.)
 
-- [ ] **Step 3: Verify** (desktop Chrome): normal online boot → unchanged. DevTools → Network → Offline → reload: app boots into grid of synced videos with local thumbnails; sidebar shows only feeds with content; videos play; timer, time's-up lock, PIN unlock all function; Continue Watching card appears for a partially-watched local video. Toggle OFF device (localStorage cleared) + offline reload → today's existing behavior (loading spinner/empty feeds — unchanged degradation). `node --check` passes.
+- [x] **Step 3: Verify** (desktop Chrome): normal online boot → unchanged. DevTools → Network → Offline → reload: app boots into grid of synced videos with local thumbnails; sidebar shows only feeds with content; videos play; timer, time's-up lock, PIN unlock all function; Continue Watching card appears for a partially-watched local video. Toggle OFF device (localStorage cleared) + offline reload → today's existing behavior (loading spinner/empty feeds — unchanged degradation). `node --check` passes.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add index.html && git commit -m "Boot into offline library mode when synced and unreachable"
@@ -765,24 +765,29 @@ git add index.html && git commit -m "Boot into offline library mode when synced 
 
 **Files:** none (deploy + checklist)
 
-- [ ] **Step 1: Deploy**
+- [x] **Step 1: Deploy**
 
 ```bash
 vercel --prod
 ```
 
-- [ ] **Step 2: David's iPhone checklist** (present to David; installed home-screen PWA required for eviction exemption):
+- [x] **Step 2: David's iPhone checklist** (present to David; installed home-screen PWA required for eviction exemption):
 
 1. Open the PWA (or re-add to home screen), Settings (PIN) → enable "Offline videos" → Sync now → watch it pull ~9 videos (Wi-Fi recommended; expect a few minutes first time).
 2. Airplane mode → relaunch from home screen → library grid appears → play → timer/lock/PIN → Continue Watching resumes.
 3. Back online → app behaves exactly as before (grid from YouTube, ⬇ badges on synced cards, those play instantly without ads).
 4. Wife-invariant spot check on her phone: nothing changed anywhere; settings shows the toggle only if she opens PIN settings.
 
-- [ ] **Step 3: Record results** — append outcomes (including OPFS quota behavior observed on iOS) to this plan file, fix anything broken before Phase 3.
+- [x] **Step 3: Record results** — append outcomes (including OPFS quota behavior observed on iOS) to this plan file, fix anything broken before Phase 3.
 
 ---
 
 ### Task 9: Fire 7 — Capacitor Filesystem adapter + APK (Phase 3)
+
+> **ON HOLD (2026-07-11):** not started. David wants to test whether the plain PWA (already
+> working on iPhone) is good enough on the Fire 7 tablet before reviving the Capacitor
+> Android scaffold and building a native adapter + APK. `ios/`, `android/`, and
+> `capacitor.config.json` remain in the repo for when/if this resumes.
 
 **Files:**
 - Modify: `index.html` (Capacitor adapter, native guards)
@@ -910,3 +915,13 @@ git commit -m "Document offline library pipeline and per-device opt-in"
 ## Out of scope (from spec)
 
 App-store distribution; iOS native/TestFlight; background sync on iOS; LAN streaming; ffmpeg post-processing beyond yt-dlp's own merge; playlist rotation beyond watched-replacement + `--rotate`.
+
+## As-executed notes
+
+Tasks 0–8 are complete and deployed; Task 9 (Fire native path) is on hold, see the note at its
+heading above; Task 10 (this documentation pass) is in progress. Several implementation details
+diverged from the plan above as written (curation numbers, sync-engine eviction ordering, iOS
+player teardown, the offline-boot reachability signal, and more) — see the
+"## As built (2026-07-11)" addendum at the end of
+`docs/superpowers/specs/2026-07-10-offline-library-design.md` for the authoritative list of
+deltas, rather than treating this plan's original code snippets as current.
