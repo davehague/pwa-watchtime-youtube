@@ -651,14 +651,16 @@ async function loadConfig() {
 async function saveConfig(c) {
   localStorage.setItem('wt_cfg', JSON.stringify(c));
   try {
-    await fetch(API_BASE + '/api/config', {
+    const resp = await fetch(API_BASE + '/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
       signal: AbortSignal.timeout(5000),
     });
+    return resp.ok;
   } catch(e) {
     console.warn('Failed to save config to server, saved locally only');
+    return false;
   }
 }
 
@@ -1768,6 +1770,10 @@ $('addChannelBtn').onclick = async () => {
     } catch(e) {}
     btn.textContent = '+ Add Channel';
     btn.disabled = false;
+    if (cfg.channels.some(c => c.id === id)) {
+      alert('That channel is already in the list');
+      return;
+    }
     cfg.channels.push({ name, id, emoji: '🎵', avatar: plThumb });
     renderSettingsChannels();
     $('addName').value = '';
@@ -1821,6 +1827,11 @@ $('addChannelBtn').onclick = async () => {
   btn.textContent = '+ Add Channel';
   btn.disabled = false;
 
+  if (cfg.channels.some(c => c.id === id)) {
+    alert('That channel is already in the list');
+    return;
+  }
+
   cfg.channels.push({ name, id, emoji, avatar });
   renderSettingsChannels();
   $('addName').value = '';
@@ -1834,7 +1845,7 @@ $('saveBtn').onclick = async () => {
   if (!/^\d{4}$/.test(p)) return alert('PIN must be exactly 4 digits');
   cfg.timerSeconds = t;
   cfg.pin = p;
-  await saveConfig(cfg);
+  const ok = await saveConfig(cfg);
   // Drop any watch-history entries whose source channel/playlist was removed.
   const validIds = new Set(cfg.channels.map(c => c.id));
   for (const vid of Object.keys(watchHistory)) {
@@ -1844,7 +1855,7 @@ $('saveBtn').onclick = async () => {
       await deleteWatchEntry(vid);
     }
   }
-  $('saveBtn').textContent = 'Saved!';
+  $('saveBtn').textContent = ok ? 'Saved!' : '⚠ Save failed — offline?';
   setTimeout(() => $('saveBtn').textContent = 'Save', 1500);
 };
 const exitSettings = async () => {
