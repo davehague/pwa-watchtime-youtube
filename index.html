@@ -1539,6 +1539,17 @@ const opfsStore = {
     return URL.createObjectURL(await fh.getFile());
   },
   async remove(name) { const d = await this.dir(); await d.removeEntry(name).catch(() => {}); },
+  async usage() {
+    if (!this.supported()) return 0;
+    const d = await this.dir();
+    let total = 0;
+    for await (const handle of d.values()) {
+      if (handle.kind !== 'file') continue;
+      const f = await handle.getFile();
+      total += f.size;
+    }
+    return total;
+  },
 };
 let libStore = opfsStore; // Task 9 swaps in the Capacitor adapter when IS_NATIVE
 
@@ -1618,8 +1629,8 @@ function renderOfflinePanel() {
 async function updateSyncUsage() {
   try {
     const n = (await libStore.names()).filter(x => x.endsWith('.mp4')).length;
-    const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
-    $('syncUsage').textContent = `${n} videos on device` + (est ? ` · ${(est.usage / 1e9).toFixed(2)} GB used` : '');
+    const bytes = await libStore.usage();
+    $('syncUsage').textContent = `${n} videos on device · ${(bytes / 1e9).toFixed(2)} GB`;
   } catch(e) { $('syncUsage').textContent = ''; }
 }
 $('offlineToggle').onchange = function() {

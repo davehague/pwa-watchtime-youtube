@@ -12,7 +12,8 @@ import { put, list, del } from '@vercel/blob';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API = 'https://pwa-watchtime-youtube.vercel.app';
-const PER_FEED = 3;
+const PER_FEED = 5;
+const MAX_DURATION_SEC = 600; // 10 min -- also excludes live/premiere entries (see listFeed)
 const MAX_TOTAL_BYTES = 10 * 1024 ** 3;
 const LIB = process.env.WT_LIBRARY_DIR || path.join(os.homedir(), 'WatchTime-Library');
 const VIDEOS_DIR = path.join(LIB, 'videos');
@@ -54,15 +55,33 @@ function listFeed(feedId, limit) {
   const base = feedId.startsWith('PL')
     ? `https://www.youtube.com/playlist?list=${feedId}`
     : `https://www.youtube.com/channel/${feedId}/videos`;
-  const args = ['--flat-playlist', '--print', '%(id)s\t%(title)s', base];
+  const args = ['--flat-playlist', '--print', '%(id)s\t%(title)s\t%(duration)s', base];
   if (limit) args.splice(1, 0, '--playlist-end', String(limit));
   return ytdlp(args).trim().split('\n').filter(Boolean).map(line => {
-    const [id, ...t] = line.split('\t');
-    return { videoId: id, title: t.join('\t') };
+    // Title can (rarely) contain a literal tab; id is always field 0 and
+    // duration is always the last field, so join whatever's left as title.
+    const parts = line.split('\t');
+    const videoId = parts[0];
+    const duration = Number(parts[parts.length - 1]);
+    const title = parts.slice(1, -1).join('\t');
+    return { videoId, title, duration };
   }).filter(v => {
     if (VALID_VIDEO_ID.test(v.videoId)) return true;
     log('SKIP (bad videoId)', feedId, JSON.stringify(v.videoId));
     return false;
+  }).filter(v => {
+    // Missing/NA/0 duration means live, premiere, or otherwise unparseable --
+    // this doubles as our live-stream filter at selection time. Anything
+    // over MAX_DURATION_SEC is out of scope for the curated short library.
+    if (!Number.isFinite(v.duration) || v.duration <= 0) {
+      log('SKIP (live/no duration)', feedId, v.videoId);
+      return false;
+    }
+    if (v.duration > MAX_DURATION_SEC) {
+      log(`SKIP (too long, ${v.duration}s)`, feedId, v.videoId);
+      return false;
+    }
+    return true;
   });
 }
 
@@ -101,9 +120,19 @@ function download(videoId) {
   if (!fs.existsSync(mp4)) {
     log('downloading', videoId);
     ytdlp([
-      '-f', 'bv*[height<=720][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=720]',
+      // 480p (down from 720p) trades per-video size for variety: 5 picks/feed
+      // instead of 3. Previously-downloaded 720p files whose videoIds remain
+      // selected are NOT re-downloaded (existsSync skip above) -- they age
+      // out naturally as picks rotate. Videos over MAX_DURATION_SEC are
+      // already excluded at selection (listFeed), so any that drop out of
+      // selection on this run get evicted by the normal keep-set logic below.
+      '-f', 'bv*[height<=480][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=480]',
       '--merge-output-format', 'mp4', '--write-info-json',
       '--write-thumbnail', '--convert-thumbnails', 'jpg', '--no-progress',
+      // Belt-and-braces: listFeed already filters live/premiere entries out
+      // by duration, but reject at download time too in case a video goes
+      // live between selection and download.
+      '--match-filters', '!is_live & !was_live',
       '-o', path.join(VIDEOS_DIR, '%(id)s.%(ext)s'),
       `https://www.youtube.com/watch?v=${videoId}`,
     ], 900000);
@@ -158,7 +187,12 @@ async function main() {
   for (const feed of cfg.channels) {
     try {
       const isPlaylist = feed.id.startsWith('PL');
-      const upstream = listFeed(feed.id, isPlaylist ? 0 : PER_FEED);
+      // Channels: look at the newest 25 uploads, filter for duration/live,
+      // then take the first PER_FEED -- 25 gives enough headroom that a
+      // channel heavy on long-form/live content still yields picks.
+      // Playlists: filter the full flat list the same way before pick
+      // selection (choosePlaylistPicks needs the whole eligible pool).
+      const upstream = listFeed(feed.id, isPlaylist ? 0 : 25);
       const picks = isPlaylist
         ? choosePlaylistPicks(feed.id, upstream, state, retiredIds)
         : upstream.slice(0, PER_FEED);
