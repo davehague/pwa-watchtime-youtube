@@ -1462,6 +1462,7 @@ async function refreshLibIds() {
 
 async function syncLibrary(onStatus) {
   if (!libStore.supported()) throw new Error('Offline storage not supported on this device');
+  await refreshLibIds().catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   const resp = await fetch(MANIFEST_URL + '?t=' + Date.now());
   if (!resp.ok) throw new Error('Could not reach library (' + resp.status + ')');
