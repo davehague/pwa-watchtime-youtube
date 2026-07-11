@@ -30,15 +30,25 @@ process.env.PATH = `${os.homedir()}/.pyenv/shims:/opt/homebrew/bin:/usr/local/bi
 function token() {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
   const env = fs.readFileSync(path.join(__dirname, '..', '.env.local'), 'utf8');
-  return env.match(/BLOB_READ_WRITE_TOKEN="?([^"\n]+)/)[1];
+  const m = env.match(/BLOB_READ_WRITE_TOKEN="?([^"\n]+)/);
+  if (!m) throw new Error('BLOB_READ_WRITE_TOKEN not found in env or .env.local');
+  return m[1];
 }
 const TOKEN = token();
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-function ytdlp(args) {
-  return execFileSync('yt-dlp', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+// Default 2 min covers version checks/self-update/listings; download() passes
+// a longer budget. killSignal ensures a wedged process is actually reaped
+// (a hung yt-dlp wedged the nightly run before this was added).
+function ytdlp(args, timeoutMs = 120000) {
+  return execFileSync('yt-dlp', args, {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    timeout: timeoutMs, killSignal: 'SIGKILL',
+  });
 }
+
+const VALID_VIDEO_ID = /^[\w-]{1,32}$/;
 
 function listFeed(feedId, limit) {
   const base = feedId.startsWith('PL')
@@ -49,6 +59,10 @@ function listFeed(feedId, limit) {
   return ytdlp(args).trim().split('\n').filter(Boolean).map(line => {
     const [id, ...t] = line.split('\t');
     return { videoId: id, title: t.join('\t') };
+  }).filter(v => {
+    if (VALID_VIDEO_ID.test(v.videoId)) return true;
+    log('SKIP (bad videoId)', feedId, JSON.stringify(v.videoId));
+    return false;
   });
 }
 
@@ -63,10 +77,16 @@ async function getJson(url) {
   return r.json();
 }
 
-function choosePlaylistPicks(feedId, upstream, state, completedIds) {
+function choosePlaylistPicks(feedId, upstream, state, retiredIds) {
+  if (PUBLISH_EXISTING) {
+    // Don't claim a slot for a video we're not about to download: just
+    // republish whichever of the already-stored picks exist locally.
+    const stored = state.playlistPicks[feedId] || [];
+    return upstream.filter(v => stored.includes(v.videoId));
+  }
   const upstreamIds = new Set(upstream.map(v => v.videoId));
   let picks = (state.playlistPicks[feedId] || []).filter(id =>
-    upstreamIds.has(id) && !completedIds.has(id) && !ROTATE);
+    upstreamIds.has(id) && !retiredIds.has(id) && !ROTATE);
   const pool = upstream.filter(v => !picks.includes(v.videoId));
   while (picks.length < PER_FEED && pool.length) {
     const i = Math.floor(Math.random() * pool.length);
@@ -86,8 +106,9 @@ function download(videoId) {
       '--write-thumbnail', '--convert-thumbnails', 'jpg', '--no-progress',
       '-o', path.join(VIDEOS_DIR, '%(id)s.%(ext)s'),
       `https://www.youtube.com/watch?v=${videoId}`,
-    ]);
+    ], 900000);
   }
+  if (fs.statSync(mp4).size === 0) throw new Error('empty download: ' + videoId);
   const info = JSON.parse(fs.readFileSync(path.join(VIDEOS_DIR, `${videoId}.info.json`), 'utf8'));
   return { size: fs.statSync(mp4).size, duration: Math.floor(info.duration || 0) };
 }
@@ -122,8 +143,16 @@ async function main() {
   const cfg = await getJson(`${API}/api/config`);
   const history = await getJson(`${API}/api/watch-history`);
   const state = loadState();
-  // Entries we saw in history last run but are gone now = watched to completion.
-  const completedIds = new Set(state.trackedHistory.filter(id => !(id in history)));
+  // Entries we tracked last run but are gone from watch-history now are
+  // "retired" -- their playlist slot should be freed up. This fires for
+  // three distinct reasons the app deletes a watch-history entry: (1) the
+  // video was watched to >=95% completion, (2) the IFrame player reported
+  // it unplayable (error code 100/101/150 -- age-gated, removed, embed-
+  // disabled), or (3) its source channel/playlist was removed from config.
+  // All three are legitimate reasons to stop holding that slot, so the
+  // replace-on-retirement behavior is correct for all of them -- but don't
+  // read "retired" as "the kid finished watching it".
+  const retiredIds = new Set(state.trackedHistory.filter(id => !(id in history)));
 
   const desired = []; // { videoId, title, channelId, channelName }
   for (const feed of cfg.channels) {
@@ -131,7 +160,7 @@ async function main() {
       const isPlaylist = feed.id.startsWith('PL');
       const upstream = listFeed(feed.id, isPlaylist ? 0 : PER_FEED);
       const picks = isPlaylist
-        ? choosePlaylistPicks(feed.id, upstream, state, completedIds)
+        ? choosePlaylistPicks(feed.id, upstream, state, retiredIds)
         : upstream.slice(0, PER_FEED);
       for (const v of picks) desired.push({ ...v, channelId: feed.id, channelName: feed.name });
     } catch (e) {
@@ -177,8 +206,7 @@ async function main() {
     // delete their local downloads-in-progress and any blobs from previous
     // full runs that a later full run still needs. Skip eviction entirely;
     // a subsequent full run reconciles everything.
-    log('skipping blob eviction (--publish-existing)');
-    log('skipping local eviction (--publish-existing)');
+    log('evictions skipped (--publish-existing) — run a full sync to reconcile');
   } else {
     // Evict blobs and local files no longer desired.
     const keep = new Set(['manifest.json',
@@ -196,7 +224,9 @@ async function main() {
 
   state.trackedHistory = Object.keys(history);
   fs.mkdirSync(LIB, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  const tmpStateFile = STATE_FILE + '.tmp';
+  fs.writeFileSync(tmpStateFile, JSON.stringify(state, null, 2));
+  fs.renameSync(tmpStateFile, STATE_FILE);
   log('done');
 }
 
