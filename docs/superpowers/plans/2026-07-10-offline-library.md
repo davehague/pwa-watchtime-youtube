@@ -898,6 +898,15 @@ git commit -m "Document offline library pipeline and per-device opt-in"
 
 ---
 
+## Deferred follow-ups (from Task 2/3 code review — accepted, not blocking)
+
+- **Timeout-stack headroom:** worst case 24 videos × 15-min yt-dlp timeout (6h) exceeds
+  the wrapper's `JOB_TIMEOUT_SECONDS=14400` (4h). Real runs finish in ~10 min; the Slack
+  timeout alert makes the pathological case visible. Revisit if a timeout alert ever fires.
+- **Truncated-mp4 guard:** a SIGKILL landing mid-ffmpeg-merge could leave a non-empty
+  truncated mp4 that later runs treat as complete. Narrow window; fix shape if needed:
+  download to temp name + rename, or ffprobe-vs-info.json duration check in `download()`.
+
 ## Out of scope (from spec)
 
 App-store distribution; iOS native/TestFlight; background sync on iOS; LAN streaming; ffmpeg post-processing beyond yt-dlp's own merge; playlist rotation beyond watched-replacement + `--rotate`.
