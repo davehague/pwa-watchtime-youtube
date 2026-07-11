@@ -13,6 +13,7 @@ import { put, list, del } from '@vercel/blob';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API = 'https://pwa-watchtime-youtube.vercel.app';
 const PER_FEED = 5;
+const MIN_DURATION_SEC = 120; // 2 min -- filters out Shorts-adjacent leakage
 const MAX_DURATION_SEC = 600; // 10 min -- also excludes live/premiere entries (see listFeed)
 const MAX_TOTAL_BYTES = 10 * 1024 ** 3;
 const LIB = process.env.WT_LIBRARY_DIR || path.join(os.homedir(), 'WatchTime-Library');
@@ -71,10 +72,25 @@ function listFeed(feedId, limit) {
     return false;
   }).filter(v => {
     // Missing/NA/0 duration means live, premiere, or otherwise unparseable --
-    // this doubles as our live-stream filter at selection time. Anything
-    // over MAX_DURATION_SEC is out of scope for the curated short library.
+    // this doubles as our live-stream filter at selection time. Duration
+    // window (too short/too long) is applied separately by
+    // filterDurationWindow() -- callers need the un-windowed list too, to
+    // compute a min-1-video-per-feed fallback when the window is empty.
     if (!Number.isFinite(v.duration) || v.duration <= 0) {
       log('SKIP (live/no duration)', feedId, v.videoId);
+      return false;
+    }
+    return true;
+  });
+}
+
+// Restricts to [MIN_DURATION_SEC, MAX_DURATION_SEC], logging why each
+// out-of-window entry was dropped. `entries` should already be live/
+// validity-filtered by listFeed().
+function filterDurationWindow(entries, feedId) {
+  return entries.filter(v => {
+    if (v.duration < MIN_DURATION_SEC) {
+      log(`SKIP (too short, ${v.duration}s)`, feedId, v.videoId);
       return false;
     }
     if (v.duration > MAX_DURATION_SEC) {
@@ -83,6 +99,19 @@ function listFeed(feedId, limit) {
     }
     return true;
   });
+}
+
+// Min-1-video-per-feed guarantee: when nothing falls in the duration window
+// (e.g. a channel that only posts long-form content), fall back to the
+// shortest entry that's still at least MIN_DURATION_SEC -- deliberately
+// allowed to exceed MAX_DURATION_SEC. Returns null if even that doesn't
+// exist (degenerate case -- feed contributes nothing, same as before).
+function pickFallback(entries, feedId) {
+  const candidates = entries.filter(v => v.duration >= MIN_DURATION_SEC);
+  if (!candidates.length) return null;
+  const shortest = candidates.reduce((a, b) => (b.duration < a.duration ? b : a));
+  log(`FALLBACK (min 1): ${shortest.videoId} (${shortest.duration}s) — no videos in ${MIN_DURATION_SEC}-${MAX_DURATION_SEC}s window`, feedId);
+  return shortest;
 }
 
 function loadState() {
@@ -96,23 +125,27 @@ async function getJson(url) {
   return r.json();
 }
 
-function choosePlaylistPicks(feedId, upstream, state, retiredIds) {
+// `windowed` is the duration-filtered pool normal picks are drawn from;
+// `rawList` is the broader live/validity-filtered-only list, needed so a
+// stored min-1-fallback pick (which may be outside the duration window by
+// design) can still be matched under --publish-existing.
+function choosePlaylistPicks(feedId, windowed, rawList, state, retiredIds) {
   if (PUBLISH_EXISTING) {
     // Don't claim a slot for a video we're not about to download: just
     // republish whichever of the already-stored picks exist locally.
     const stored = state.playlistPicks[feedId] || [];
-    return upstream.filter(v => stored.includes(v.videoId));
+    return rawList.filter(v => stored.includes(v.videoId));
   }
-  const upstreamIds = new Set(upstream.map(v => v.videoId));
+  const upstreamIds = new Set(windowed.map(v => v.videoId));
   let picks = (state.playlistPicks[feedId] || []).filter(id =>
     upstreamIds.has(id) && !retiredIds.has(id) && !ROTATE);
-  const pool = upstream.filter(v => !picks.includes(v.videoId));
+  const pool = windowed.filter(v => !picks.includes(v.videoId));
   while (picks.length < PER_FEED && pool.length) {
     const i = Math.floor(Math.random() * pool.length);
     picks.push(pool.splice(i, 1)[0].videoId);
   }
   state.playlistPicks[feedId] = picks;
-  return upstream.filter(v => picks.includes(v.videoId));
+  return windowed.filter(v => picks.includes(v.videoId));
 }
 
 function download(videoId) {
@@ -187,15 +220,30 @@ async function main() {
   for (const feed of cfg.channels) {
     try {
       const isPlaylist = feed.id.startsWith('PL');
-      // Channels: look at the newest 25 uploads, filter for duration/live,
-      // then take the first PER_FEED -- 25 gives enough headroom that a
-      // channel heavy on long-form/live content still yields picks.
-      // Playlists: filter the full flat list the same way before pick
-      // selection (choosePlaylistPicks needs the whole eligible pool).
-      const upstream = listFeed(feed.id, isPlaylist ? 0 : 25);
-      const picks = isPlaylist
-        ? choosePlaylistPicks(feed.id, upstream, state, retiredIds)
-        : upstream.slice(0, PER_FEED);
+      // Channels: look at the newest 25 uploads (live/validity-filtered
+      // only); playlists: the full flat list. 25 gives enough headroom
+      // that a channel heavy on long-form/live content still yields picks.
+      const rawList = listFeed(feed.id, isPlaylist ? 0 : 25);
+      const windowed = filterDurationWindow(rawList, feed.id);
+      let picks;
+      if (isPlaylist) {
+        picks = choosePlaylistPicks(feed.id, windowed, rawList, state, retiredIds);
+        // Min-1-per-feed fallback. Skipped under --publish-existing: that
+        // mode must not select or persist anything new (see choosePlaylistPicks).
+        if (picks.length === 0 && !PUBLISH_EXISTING) {
+          const fallback = pickFallback(rawList, feed.id);
+          if (fallback) {
+            picks = [fallback];
+            state.playlistPicks[feed.id] = [fallback.videoId];
+          }
+        }
+      } else {
+        picks = windowed.slice(0, PER_FEED);
+        if (picks.length === 0) {
+          const fallback = pickFallback(rawList, feed.id);
+          if (fallback) picks = [fallback];
+        }
+      }
       for (const v of picks) desired.push({ ...v, channelId: feed.id, channelName: feed.name });
     } catch (e) {
       log(`FEED FAILED ${feed.name} (${feed.id}):`, e.message.slice(0, 300));
