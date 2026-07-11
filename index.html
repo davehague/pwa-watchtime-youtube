@@ -1547,6 +1547,12 @@ const opfsStore = {
     const fh = await d.getFileHandle(name);
     return URL.createObjectURL(await fh.getFile());
   },
+  async stat(name) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name);
+    const f = await fh.getFile();
+    return f.size;
+  },
   async remove(name) { const d = await this.dir(); await d.removeEntry(name).catch(() => {}); },
   async usage() {
     if (!this.supported()) return 0;
@@ -1593,9 +1599,24 @@ async function syncLibrary(onStatus) {
         failed++;
         onStatus(`⚠ ${label} failed, continuing`);
       }
-    } else if (v.thumbUrl && !have.has(`${v.videoId}.jpg`)) {
-      // Repair thumbs for videos synced under an older/interrupted manifest.
-      await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+    } else {
+      // Replace files whose bytes changed server-side (e.g. re-encodes) — size is our cheap content hash.
+      let localSize = null;
+      try { localSize = await libStore.stat(`${v.videoId}.mp4`); } catch(e) {}
+      if (localSize !== null && v.size && localSize !== v.size) {
+        try {
+          onStatus(`⟳ ${label} (updated)`);
+          await libStore.remove(`${v.videoId}.mp4`);
+          await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⟳ ${label} — ${Math.round(p * 100)}%`));
+        } catch (e) {
+          failed++;
+          onStatus(`⚠ ${label} failed, continuing`);
+        }
+      }
+      if (v.thumbUrl && !have.has(`${v.videoId}.jpg`)) {
+        // Repair thumbs for videos synced under an older/interrupted manifest.
+        await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+      }
     }
   }
 
