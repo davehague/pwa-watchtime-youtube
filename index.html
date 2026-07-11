@@ -582,7 +582,7 @@
     <h3>Offline Library (this device only)</h3>
     <div class="s-row">
       <span class="label">Enable offline videos</span>
-      <input type="checkbox" id="offlineToggle" style="width:auto;margin:0;transform:scale(1.4);">
+      <input type="checkbox" id="offlineToggle" style="width:auto;margin:0;transform:scale(1.4);accent-color:var(--green);">
     </div>
     <div id="offlinePanel" class="hidden">
       <button class="btn btn-primary btn-block" id="syncBtn" style="margin:6px 0;">⬇ Sync now</button>
@@ -1410,6 +1410,83 @@ $('quickTimerCancel').onclick = () => {
 };
 
 // =============================================
+// OFFLINE LIBRARY
+// =============================================
+let libIds = new Set(); // videoIds present on this device
+
+const opfsStore = {
+  supported: () => !!(navigator.storage && navigator.storage.getDirectory),
+  async dir() {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle('library', { create: true });
+  },
+  async names() {
+    if (!this.supported()) return [];
+    const d = await this.dir(); const out = [];
+    for await (const name of d.keys()) out.push(name);
+    return out;
+  },
+  async save(name, url, onProgress) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    const resp = await fetch(url);
+    if (!resp.ok) { await w.abort(); throw new Error('HTTP ' + resp.status); }
+    const total = +resp.headers.get('Content-Length') || 0;
+    const reader = resp.body.getReader();
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await w.write(value);
+      got += value.length;
+      if (onProgress && total) onProgress(got / total);
+    }
+    await w.close();
+  },
+  async fileUrl(name) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name);
+    return URL.createObjectURL(await fh.getFile());
+  },
+  async remove(name) { const d = await this.dir(); await d.removeEntry(name).catch(() => {}); },
+};
+let libStore = opfsStore; // Task 9 swaps in the Capacitor adapter when IS_NATIVE
+
+function getLibManifest() {
+  try { return JSON.parse(localStorage.getItem('wt_lib_manifest')); } catch(e) { return null; }
+}
+async function refreshLibIds() {
+  libIds = new Set((await libStore.names()).filter(n => n.endsWith('.mp4')).map(n => n.slice(0, -4)));
+}
+
+async function syncLibrary(onStatus) {
+  if (!libStore.supported()) throw new Error('Offline storage not supported on this device');
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  const resp = await fetch(MANIFEST_URL + '?t=' + Date.now());
+  if (!resp.ok) throw new Error('Could not reach library (' + resp.status + ')');
+  const manifest = await resp.json();
+  localStorage.setItem('wt_lib_manifest', JSON.stringify(manifest));
+  const want = new Set(manifest.videos.flatMap(v => [`${v.videoId}.mp4`, `${v.videoId}.jpg`]));
+  for (const name of await libStore.names()) {
+    if (!want.has(name)) await libStore.remove(name);
+  }
+  let done = 0;
+  for (const v of manifest.videos) {
+    done++;
+    const label = `${done}/${manifest.videos.length} ${v.title.slice(0, 40)}`;
+    if (!libIds.has(v.videoId)) {
+      onStatus(`⬇ ${label}`);
+      await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⬇ ${label} — ${Math.round(p * 100)}%`));
+      if (v.thumbUrl) await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+    }
+  }
+  await refreshLibIds();
+  localStorage.setItem('wt_lib_synced_at', String(Date.now()));
+  onStatus('Up to date ✓');
+}
+
+// =============================================
 // SETTINGS
 // =============================================
 $('settingsBtn').onclick = () => {
@@ -1445,6 +1522,16 @@ async function updateSyncUsage() {
 $('offlineToggle').onchange = function() {
   localStorage.setItem('wt_offline_enabled', this.checked ? '1' : '0');
   renderOfflinePanel();
+};
+$('syncBtn').onclick = async () => {
+  $('syncBtn').disabled = true;
+  try {
+    await syncLibrary(msg => { $('syncStatus').textContent = msg; });
+  } catch(e) {
+    $('syncStatus').textContent = '⚠ ' + e.message;
+  }
+  $('syncBtn').disabled = false;
+  updateSyncUsage();
 };
 
 function renderSettingsChannels() {
@@ -1639,6 +1726,7 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
   const [c, wh] = await Promise.all([loadConfig(), loadWatchHistory()]);
   cfg = c;
   watchHistory = wh || {};
+  if (offlineEnabled()) refreshLibIds().catch(() => {});
   // Drop any entries whose source channel/playlist was removed in another session.
   const validIds = new Set(cfg.channels.map(ch => ch.id));
   for (const vid of Object.keys(watchHistory)) {
