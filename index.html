@@ -1415,6 +1415,9 @@ $('quickTimerCancel').onclick = () => {
 let libIds = new Set(); // videoIds present on this device
 
 const opfsStore = {
+  // Main-thread createWritable() assumes iOS 26+/Safari 26+. On older Safari
+  // (no createWritable on the main thread) this surfaces as a TypeError that
+  // propagates through the sync error path — acceptable, not special-cased.
   supported: () => !!(navigator.storage && navigator.storage.getDirectory),
   async dir() {
     const root = await navigator.storage.getDirectory();
@@ -1430,17 +1433,22 @@ const opfsStore = {
     const d = await this.dir();
     const fh = await d.getFileHandle(name, { create: true });
     const w = await fh.createWritable();
-    const resp = await fetch(url);
-    if (!resp.ok) { await w.abort(); throw new Error('HTTP ' + resp.status); }
-    const total = +resp.headers.get('Content-Length') || 0;
-    const reader = resp.body.getReader();
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      await w.write(value);
-      got += value.length;
-      if (onProgress && total) onProgress(got / total);
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const total = +resp.headers.get('Content-Length') || 0;
+      const reader = resp.body.getReader();
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await w.write(value);
+        got += value.length;
+        if (onProgress && total) onProgress(got / total);
+      }
+    } catch (e) {
+      await w.abort().catch(() => {});
+      throw e;
     }
     await w.close();
   },
@@ -1467,24 +1475,37 @@ async function syncLibrary(onStatus) {
   const resp = await fetch(MANIFEST_URL + '?t=' + Date.now());
   if (!resp.ok) throw new Error('Could not reach library (' + resp.status + ')');
   const manifest = await resp.json();
-  localStorage.setItem('wt_lib_manifest', JSON.stringify(manifest));
-  const want = new Set(manifest.videos.flatMap(v => [`${v.videoId}.mp4`, `${v.videoId}.jpg`]));
-  for (const name of await libStore.names()) {
-    if (!want.has(name)) await libStore.remove(name);
-  }
+  try { localStorage.setItem('wt_lib_manifest', JSON.stringify(manifest)); } catch (e) {}
+
+  let failed = 0;
   let done = 0;
   for (const v of manifest.videos) {
     done++;
     const label = `${done}/${manifest.videos.length} ${v.title.slice(0, 40)}`;
     if (!libIds.has(v.videoId)) {
-      onStatus(`⬇ ${label}`);
-      await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⬇ ${label} — ${Math.round(p * 100)}%`));
-      if (v.thumbUrl) await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+      try {
+        onStatus(`⬇ ${label}`);
+        await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⬇ ${label} — ${Math.round(p * 100)}%`));
+        if (v.thumbUrl) await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+      } catch (e) {
+        failed++;
+        onStatus(`⚠ ${label} failed, continuing`);
+      }
     }
   }
+
+  // Only evict stale local files when every download succeeded — on a partial
+  // failure, keeping old content beats leaving the car-trip device with less.
+  if (failed === 0) {
+    const want = new Set(manifest.videos.flatMap(v => [`${v.videoId}.mp4`, `${v.videoId}.jpg`]));
+    for (const name of await libStore.names()) {
+      if (!want.has(name)) await libStore.remove(name);
+    }
+  }
+
   await refreshLibIds();
   localStorage.setItem('wt_lib_synced_at', String(Date.now()));
-  onStatus('Up to date ✓');
+  onStatus(failed === 0 ? 'Up to date ✓' : `⚠ Synced with ${failed} failed — old videos kept`);
 }
 
 // =============================================
