@@ -635,6 +635,7 @@ async function loadConfig() {
     const resp = await fetch(API_BASE + '/api/config', { signal: AbortSignal.timeout(5000) });
     if (resp.ok) {
       const c = await resp.json();
+      configFromServer = true;
       localStorage.setItem('wt_cfg', JSON.stringify(c));
       return c;
     }
@@ -736,6 +737,7 @@ let videoCache = {}; // channelId -> [videos]
 let watchHistory = {}; // videoId -> { videoId, title, channelId, channelName, position, duration, savedAt }
 let currentVideo = null; // active video this session: { videoId, title, channelId, channelName, lastPosition, duration }
 let libraryMode = false; // true when booted offline against the synced local library
+let configFromServer = false; // true once loadConfig() has successfully reached /api/config
 
 // =============================================
 // DOM refs
@@ -1018,6 +1020,8 @@ function prependContinueCardIfAny() {
   if (!candidate || !candidate.videoId) return;
   // Hide if the source channel/playlist is no longer in the user's list.
   if (candidate.channelId && !cfg.channels.some(c => c.id === candidate.channelId)) return;
+  // In library mode the continue target must actually be on the device.
+  if (libraryMode && !libIds.has(candidate.videoId)) return;
   // De-dupe: if the same video already appears as a regular card in the grid, remove it
   // so the continue card is the only copy.
   const dupe = grid.querySelector(`.video-card[data-video-id="${CSS.escape(candidate.videoId)}"]`);
@@ -1838,11 +1842,9 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
     await refreshLibIds().catch(() => {});
     const m = getLibManifest();
     // Offline (or API unreachable) with a synced library -> library mode.
-    let online = navigator.onLine;
-    if (online) {
-      try { await fetch(API_BASE + '/api/config', { method: 'HEAD', signal: AbortSignal.timeout(3000) }); }
-      catch(e) { online = false; }
-    }
+    // loadConfig() above already probed /api/config; reuse that result instead
+    // of re-probing reachability here.
+    const online = configFromServer;
     if (!online && m && libIds.size > 0) {
       libraryMode = true;
       cfg.channels = cfg.channels.filter(ch => m.videos.some(v => v.channelId === ch.id && libIds.has(v.videoId)));
