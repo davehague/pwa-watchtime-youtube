@@ -727,6 +727,7 @@ let timer = { remaining: 0, total: 0, interval: null, running: false };
 let pinState = { buffer: '', callback: null };
 let ytPlayer = null;
 let localVideoEl = null;
+let playerGeneration = 0;
 let ytReady = false;
 let wakeLock = null;
 let currentChannel = null;
@@ -1034,7 +1035,7 @@ function makeVideoCard(v, opts = {}) {
     progressBar = `<div class="watch-progress" style="width:${pct}%"></div>`;
   }
   const offBadge = (offlineEnabled() && libIds.has(v.videoId))
-    ? '<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);border-radius:8px;padding:2px 6px;font-size:11px;">⬇</div>'
+    ? '<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);border-radius:8px;padding:2px 6px;font-size:11px;pointer-events:none;">⬇</div>'
     : '';
   const chLabel = (opts.showChannelName && v.channelName && (!currentChannel || v.channelId !== currentChannel.id))
     ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>`
@@ -1115,7 +1116,28 @@ function getPlaybackState() {
 }
 
 async function playLocalVideo(v, startSeconds) {
-  const url = await libStore.fileUrl(`${v.videoId}.mp4`);
+  const gen = playerGeneration;
+  let url;
+  try {
+    url = await libStore.fileUrl(`${v.videoId}.mp4`);
+  } catch (e) {
+    if (gen !== playerGeneration) return;
+    // The library lied — heal the index so badges/routing stop claiming this video is local.
+    libIds.delete(v.videoId);
+    if (navigator.onLine === false) {
+      $('playerWrapper').innerHTML = '<div class="video-loading">Oops! This video isn\'t on the device.<br>Pick another one! 🎬</div>';
+      return;
+    }
+    if (ytReady) {
+      createPlayer(v.videoId, startSeconds);
+    } else {
+      const check = setInterval(() => {
+        if (ytReady) { clearInterval(check); createPlayer(v.videoId, startSeconds); }
+      }, 200);
+    }
+    return;
+  }
+  if (gen !== playerGeneration) { try { URL.revokeObjectURL(url); } catch(e) {} return; }
   $('playerWrapper').innerHTML = '<video id="localPlayer" playsinline autoplay style="width:100%;height:100%;background:#000;"></video><div class="player-shield"></div>';
   localVideoEl = document.getElementById('localPlayer');
   localVideoEl.src = url;
@@ -1154,6 +1176,7 @@ function playVideo(v, startSeconds = 0) {
   showOnly('playerScreen');
 
   // Tear down whichever player was active.
+  playerGeneration++;
   if (ytPlayer) { try { ytPlayer.destroy(); } catch(e) {} ytPlayer = null; }
   if (localVideoEl) { try { if (localVideoEl.src.startsWith('blob:')) URL.revokeObjectURL(localVideoEl.src); } catch(e) {} localVideoEl = null; }
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
@@ -1308,6 +1331,7 @@ $('timesUpBtn').onclick = () => {
 };
 
 function destroyPlayer() {
+  playerGeneration++;
   if (ytPlayer) {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
