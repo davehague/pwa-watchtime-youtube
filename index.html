@@ -735,6 +735,7 @@ let currentVideoId = null;
 let videoCache = {}; // channelId -> [videos]
 let watchHistory = {}; // videoId -> { videoId, title, channelId, channelName, position, duration, savedAt }
 let currentVideo = null; // active video this session: { videoId, title, channelId, channelName, lastPosition, duration }
+let libraryMode = false; // true when booted offline against the synced local library
 
 // =============================================
 // DOM refs
@@ -1083,6 +1084,16 @@ $('shuffleBtn').onclick = async () => {
 };
 
 async function fetchVideos(channelId) {
+  if (libraryMode) {
+    const m = getLibManifest();
+    if (!m) return [];
+    const vids = m.videos.filter(v => v.channelId === channelId && libIds.has(v.videoId));
+    return Promise.all(vids.map(async v => ({
+      videoId: v.videoId, title: v.title,
+      thumb: await libStore.fileUrl(`${v.videoId}.jpg`).catch(() => ''),
+      channelId: v.channelId, channelName: v.channelName,
+    })));
+  }
   try {
     const resp = await fetch(`${API_BASE}/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
@@ -1814,7 +1825,6 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
   const [c, wh] = await Promise.all([loadConfig(), loadWatchHistory()]);
   cfg = c;
   watchHistory = wh || {};
-  if (offlineEnabled()) refreshLibIds().catch(() => {});
   // Drop any entries whose source channel/playlist was removed in another session.
   const validIds = new Set(cfg.channels.map(ch => ch.id));
   for (const vid of Object.keys(watchHistory)) {
@@ -1822,6 +1832,20 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
     if (e && e.channelId && !validIds.has(e.channelId)) {
       delete watchHistory[vid];
       deleteWatchEntry(vid);
+    }
+  }
+  if (offlineEnabled()) {
+    await refreshLibIds().catch(() => {});
+    const m = getLibManifest();
+    // Offline (or API unreachable) with a synced library -> library mode.
+    let online = navigator.onLine;
+    if (online) {
+      try { await fetch(API_BASE + '/api/config', { method: 'HEAD', signal: AbortSignal.timeout(3000) }); }
+      catch(e) { online = false; }
+    }
+    if (!online && m && libIds.size > 0) {
+      libraryMode = true;
+      cfg.channels = cfg.channels.filter(ch => m.videos.some(v => v.channelId === ch.id && libIds.has(v.videoId)));
     }
   }
   // Shuffle channel order each session for variety
