@@ -1130,6 +1130,21 @@ function getPlaybackState() {
   return null;
 }
 
+function unloadLocalVideo() {
+  if (!localVideoEl) return;
+  // iOS WebKit holds the media decode pipeline of a discarded <video> element
+  // unless it is explicitly unloaded (pause -> clear src -> load). Without this,
+  // the NEXT local video can sit at readyState 0 forever: black screen.
+  try {
+    localVideoEl.pause();
+    const u = localVideoEl.src;
+    localVideoEl.removeAttribute('src');
+    localVideoEl.load();
+    if (u && u.startsWith('blob:')) URL.revokeObjectURL(u);
+  } catch(e) {}
+  localVideoEl = null;
+}
+
 async function playLocalVideo(v, startSeconds) {
   const gen = playerGeneration;
   let url;
@@ -1193,7 +1208,7 @@ function playVideo(v, startSeconds = 0) {
   // Tear down whichever player was active.
   playerGeneration++;
   if (ytPlayer) { try { ytPlayer.destroy(); } catch(e) {} ytPlayer = null; }
-  if (localVideoEl) { try { if (localVideoEl.src.startsWith('blob:')) URL.revokeObjectURL(localVideoEl.src); } catch(e) {} localVideoEl = null; }
+  unloadLocalVideo();
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
 
   if (offlineEnabled() && libIds.has(v.videoId)) {
@@ -1351,13 +1366,7 @@ function destroyPlayer() {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
   }
-  if (localVideoEl) {
-    try {
-      localVideoEl.pause();
-      if (localVideoEl.src.startsWith('blob:')) URL.revokeObjectURL(localVideoEl.src);
-    } catch(e) {}
-    localVideoEl = null;
-  }
+  unloadLocalVideo();
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield" id="playerShield"></div>';
 }
 
