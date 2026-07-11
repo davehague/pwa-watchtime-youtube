@@ -579,6 +579,19 @@
   </div>
 
   <div class="s-group">
+    <h3>Offline Library (this device only)</h3>
+    <div class="s-row">
+      <span class="label">Enable offline videos</span>
+      <input type="checkbox" id="offlineToggle" style="width:auto;margin:0;transform:scale(1.4);accent-color:var(--green);">
+    </div>
+    <div id="offlinePanel" class="hidden">
+      <button class="btn btn-primary btn-block" id="syncBtn" style="margin:6px 0;">⬇ Sync now</button>
+      <div class="s-hint" id="syncStatus">Not synced yet</div>
+      <div class="s-hint" id="syncUsage"></div>
+    </div>
+  </div>
+
+  <div class="s-group">
     <h3>Channels</h3>
     <div id="settingsChannelList"></div>
     <hr style="border-color:var(--border); margin:10px 0">
@@ -603,6 +616,9 @@
 
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const API_BASE = IS_NATIVE ? 'https://pwa-watchtime-youtube.vercel.app' : '';
+const LIB_BASE = 'https://iacel7bq0buwt6bn.public.blob.vercel-storage.com';
+const MANIFEST_URL = LIB_BASE + '/manifest.json';
+const offlineEnabled = () => localStorage.getItem('wt_offline_enabled') === '1';
 
 const DEFAULT_CONFIG = {
   pin: '1234',
@@ -619,6 +635,7 @@ async function loadConfig() {
     const resp = await fetch(API_BASE + '/api/config', { signal: AbortSignal.timeout(5000) });
     if (resp.ok) {
       const c = await resp.json();
+      configFromServer = true;
       localStorage.setItem('wt_cfg', JSON.stringify(c));
       return c;
     }
@@ -634,14 +651,16 @@ async function loadConfig() {
 async function saveConfig(c) {
   localStorage.setItem('wt_cfg', JSON.stringify(c));
   try {
-    await fetch(API_BASE + '/api/config', {
+    const resp = await fetch(API_BASE + '/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
       signal: AbortSignal.timeout(5000),
     });
+    return resp.ok;
   } catch(e) {
     console.warn('Failed to save config to server, saved locally only');
+    return false;
   }
 }
 
@@ -710,6 +729,8 @@ function getContinueCandidate() {
 let timer = { remaining: 0, total: 0, interval: null, running: false };
 let pinState = { buffer: '', callback: null };
 let ytPlayer = null;
+let localVideoEl = null;
+let playerGeneration = 0;
 let ytReady = false;
 let wakeLock = null;
 let currentChannel = null;
@@ -717,6 +738,8 @@ let currentVideoId = null;
 let videoCache = {}; // channelId -> [videos]
 let watchHistory = {}; // videoId -> { videoId, title, channelId, channelName, position, duration, savedAt }
 let currentVideo = null; // active video this session: { videoId, title, channelId, channelName, lastPosition, duration }
+let libraryMode = false; // true when booted offline against the synced local library
+let configFromServer = false; // true once loadConfig() has successfully reached /api/config
 
 // =============================================
 // DOM refs
@@ -751,13 +774,10 @@ function startSession() {
     timer.remaining = Math.max(0, timer.remaining - 1);
     updateTimerUI();
     // Sample current player position; track max-seen so scrub-backs don't reduce our furthest mark.
-    if (ytPlayer && currentVideo) {
-      try {
-        const pos = ytPlayer.getCurrentTime();
-        const dur = ytPlayer.getDuration();
-        if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
-        if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
-      } catch(e) {}
+    const st = getPlaybackState();
+    if (st && currentVideo) {
+      if (st.pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(st.pos));
+      if (st.dur > 0) currentVideo.duration = Math.floor(st.dur);
     }
     if (timer.remaining <= 0) {
       stopSession();
@@ -776,13 +796,10 @@ function stopSession() {
 function saveCurrentVideoProgress() {
   if (!currentVideo || !currentVideo.videoId) return;
   // One last sample so we don't lose progress between the most recent 1-Hz tick and this call.
-  if (ytPlayer) {
-    try {
-      const pos = ytPlayer.getCurrentTime();
-      const dur = ytPlayer.getDuration();
-      if (typeof pos === 'number' && pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(pos));
-      if (typeof dur === 'number' && dur > 0) currentVideo.duration = Math.floor(dur);
-    } catch(e) {}
+  const st = getPlaybackState();
+  if (st) {
+    if (st.pos > 0) currentVideo.lastPosition = Math.max(currentVideo.lastPosition, Math.floor(st.pos));
+    if (st.dur > 0) currentVideo.duration = Math.floor(st.dur);
   }
   const { videoId, title, channelId, channelName, lastPosition, duration } = currentVideo;
   // If duration was never resolved (e.g., player wasn't ready), don't write a phantom entry —
@@ -1005,6 +1022,8 @@ function prependContinueCardIfAny() {
   if (!candidate || !candidate.videoId) return;
   // Hide if the source channel/playlist is no longer in the user's list.
   if (candidate.channelId && !cfg.channels.some(c => c.id === candidate.channelId)) return;
+  // In library mode the continue target must actually be on the device.
+  if (libraryMode && !libIds.has(candidate.videoId)) return;
   // De-dupe: if the same video already appears as a regular card in the grid, remove it
   // so the continue card is the only copy.
   const dupe = grid.querySelector(`.video-card[data-video-id="${CSS.escape(candidate.videoId)}"]`);
@@ -1022,6 +1041,9 @@ function makeVideoCard(v, opts = {}) {
     const pct = Math.min(100, Math.max(2, (wh.position / wh.duration) * 100));
     progressBar = `<div class="watch-progress" style="width:${pct}%"></div>`;
   }
+  const offBadge = (offlineEnabled() && libIds.has(v.videoId))
+    ? '<div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);border-radius:8px;padding:2px 6px;font-size:11px;pointer-events:none;">⬇</div>'
+    : '';
   const chLabel = (opts.showChannelName && v.channelName && (!currentChannel || v.channelId !== currentChannel.id))
     ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${escHtml(v.channelName)}</div>`
     : '';
@@ -1029,6 +1051,7 @@ function makeVideoCard(v, opts = {}) {
     <div class="thumb-wrap">
       <img class="thumb" src="${v.thumb}" alt="" loading="lazy" onerror="this.style.background='var(--surface-2)'">
       ${progressBar}
+      ${offBadge}
     </div>
     <div class="info">
       <div class="title">${escHtml(v.title)}</div>
@@ -1048,9 +1071,15 @@ $('videoPanel').addEventListener('scroll', () => {
   if (selectedFeed !== 'all') return;
   const panel = $('videoPanel');
   if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 200) {
-    const prevCount = $('videoGrid').children.length;
+    // Skip the rebuild when every available video has already been requested —
+    // rebuilding anyway makes the grid visibly flash (worst during iOS
+    // rubber-band overscroll, which fires scroll events while pinned at the
+    // bottom). Compare requested batches against the available pool rather
+    // than counting DOM cards: the continue card de-dupes its regular card
+    // out of the grid, so a DOM count runs permanently one short and would
+    // never trip this guard.
+    if (roundRobinIndex * VIDEOS_PER_BATCH >= getRoundRobinVideos(Infinity).length) return;
     renderRoundRobin();
-    // If no new videos were added, we've exhausted all feeds
   }
 });
 
@@ -1067,6 +1096,16 @@ $('shuffleBtn').onclick = async () => {
 };
 
 async function fetchVideos(channelId) {
+  if (libraryMode) {
+    const m = getLibManifest();
+    if (!m) return [];
+    const vids = m.videos.filter(v => v.channelId === channelId && libIds.has(v.videoId));
+    return Promise.all(vids.map(async v => ({
+      videoId: v.videoId, title: v.title,
+      thumb: await libStore.fileUrl(`${v.videoId}.jpg`).catch(() => ''),
+      channelId: v.channelId, channelName: v.channelName,
+    })));
+  }
   try {
     const resp = await fetch(`${API_BASE}/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
@@ -1089,6 +1128,71 @@ function escHtml(str) {
 // =============================================
 // PLAYER
 // =============================================
+function getPlaybackState() {
+  if (localVideoEl) {
+    return { pos: localVideoEl.currentTime || 0, dur: localVideoEl.duration || 0 };
+  }
+  if (ytPlayer) {
+    try { return { pos: ytPlayer.getCurrentTime() || 0, dur: ytPlayer.getDuration() || 0 }; } catch(e) {}
+  }
+  return null;
+}
+
+function unloadLocalVideo() {
+  if (!localVideoEl) return;
+  // iOS WebKit holds the media decode pipeline of a discarded <video> element
+  // unless it is explicitly unloaded (pause -> clear src -> load). Without this,
+  // the NEXT local video can sit at readyState 0 forever: black screen.
+  try {
+    localVideoEl.pause();
+    const u = localVideoEl.src;
+    localVideoEl.removeAttribute('src');
+    localVideoEl.load();
+    if (u && u.startsWith('blob:')) URL.revokeObjectURL(u);
+  } catch(e) {}
+  localVideoEl = null;
+}
+
+async function playLocalVideo(v, startSeconds) {
+  const gen = playerGeneration;
+  let url;
+  try {
+    url = await libStore.fileUrl(`${v.videoId}.mp4`);
+  } catch (e) {
+    if (gen !== playerGeneration) return;
+    // The library lied — heal the index so badges/routing stop claiming this video is local.
+    libIds.delete(v.videoId);
+    if (navigator.onLine === false) {
+      $('playerWrapper').innerHTML = '<div class="video-loading">Oops! This video isn\'t on the device.<br>Pick another one! 🎬</div>';
+      return;
+    }
+    if (ytReady) {
+      createPlayer(v.videoId, startSeconds);
+    } else {
+      const check = setInterval(() => {
+        if (ytReady) { clearInterval(check); createPlayer(v.videoId, startSeconds); }
+      }, 200);
+    }
+    return;
+  }
+  if (gen !== playerGeneration) { try { URL.revokeObjectURL(url); } catch(e) {} return; }
+  $('playerWrapper').innerHTML = '<video id="localPlayer" playsinline autoplay style="width:100%;height:100%;background:#000;"></video><div class="player-shield"></div>';
+  localVideoEl = document.getElementById('localPlayer');
+  localVideoEl.src = url;
+  // Seek only once metadata is ready — Safari ignores currentTime set before loadedmetadata.
+  if (startSeconds > 0) {
+    localVideoEl.addEventListener('loadedmetadata', () => {
+      localVideoEl.currentTime = Math.floor(startSeconds);
+    }, { once: true });
+  }
+  localVideoEl.onended = () => {
+    if (currentVideo && currentVideo.duration > 0) currentVideo.lastPosition = currentVideo.duration;
+    saveCurrentVideoProgress();
+    if (timer.remaining > 0) showUpNext();
+  };
+  localVideoEl.play().catch(() => {});
+}
+
 function playVideo(v, startSeconds = 0) {
   if (timer.remaining <= 0) return;
   // Save the outgoing video before we lose its state.
@@ -1109,13 +1213,16 @@ function playVideo(v, startSeconds = 0) {
   };
   showOnly('playerScreen');
 
-  // Destroy existing player
-  if (ytPlayer) {
-    try { ytPlayer.destroy(); } catch(e) {}
-    ytPlayer = null;
-  }
+  // Tear down whichever player was active.
+  playerGeneration++;
+  if (ytPlayer) { try { ytPlayer.destroy(); } catch(e) {} ytPlayer = null; }
+  unloadLocalVideo();
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield"></div>';
 
+  if (offlineEnabled() && libIds.has(v.videoId)) {
+    playLocalVideo(v, startSeconds);
+    return;
+  }
   if (ytReady) {
     createPlayer(v.videoId, startSeconds);
   } else {
@@ -1262,16 +1369,23 @@ $('timesUpBtn').onclick = () => {
 };
 
 function destroyPlayer() {
+  playerGeneration++;
   if (ytPlayer) {
     try { ytPlayer.destroy(); } catch(e) {}
     ytPlayer = null;
   }
+  unloadLocalVideo();
   $('playerWrapper').innerHTML = '<div id="ytPlayer"></div><div class="player-shield" id="playerShield"></div>';
 }
 
 // Tap shield to toggle play/pause
 $('playerWrapper').addEventListener('click', (e) => {
-  if (e.target.classList.contains('player-shield') && ytPlayer) {
+  if (!e.target.classList.contains('player-shield')) return;
+  if (localVideoEl) {
+    localVideoEl.paused ? localVideoEl.play() : localVideoEl.pause();
+    return;
+  }
+  if (ytPlayer) {
     try {
       const state = ytPlayer.getPlayerState();
       if (state === YT.PlayerState.PLAYING) {
@@ -1394,6 +1508,141 @@ $('quickTimerCancel').onclick = () => {
 };
 
 // =============================================
+// OFFLINE LIBRARY
+// =============================================
+let libIds = new Set(); // videoIds present on this device
+
+const opfsStore = {
+  // Main-thread createWritable() assumes iOS 26+/Safari 26+. On older Safari
+  // (no createWritable on the main thread) this surfaces as a TypeError that
+  // propagates through the sync error path — acceptable, not special-cased.
+  supported: () => !!(navigator.storage && navigator.storage.getDirectory),
+  async dir() {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle('library', { create: true });
+  },
+  async names() {
+    if (!this.supported()) return [];
+    const d = await this.dir(); const out = [];
+    for await (const name of d.keys()) out.push(name);
+    return out;
+  },
+  async save(name, url, onProgress) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const total = +resp.headers.get('Content-Length') || 0;
+      const reader = resp.body.getReader();
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await w.write(value);
+        got += value.length;
+        if (onProgress && total) onProgress(got / total);
+      }
+    } catch (e) {
+      await w.abort().catch(() => {});
+      throw e;
+    }
+    await w.close();
+  },
+  async fileUrl(name) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name);
+    return URL.createObjectURL(await fh.getFile());
+  },
+  async stat(name) {
+    const d = await this.dir();
+    const fh = await d.getFileHandle(name);
+    const f = await fh.getFile();
+    return f.size;
+  },
+  async remove(name) { const d = await this.dir(); await d.removeEntry(name).catch(() => {}); },
+  async usage() {
+    if (!this.supported()) return 0;
+    const d = await this.dir();
+    let total = 0;
+    for await (const handle of d.values()) {
+      if (handle.kind !== 'file') continue;
+      const f = await handle.getFile();
+      total += f.size;
+    }
+    return total;
+  },
+};
+let libStore = opfsStore; // Task 9 swaps in the Capacitor adapter when IS_NATIVE
+
+function getLibManifest() {
+  try { return JSON.parse(localStorage.getItem('wt_lib_manifest')); } catch(e) { return null; }
+}
+async function refreshLibIds() {
+  libIds = new Set((await libStore.names()).filter(n => n.endsWith('.mp4')).map(n => n.slice(0, -4)));
+}
+
+async function syncLibrary(onStatus) {
+  if (!libStore.supported()) throw new Error('Offline storage not supported on this device');
+  await refreshLibIds().catch(() => {});
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  const resp = await fetch(MANIFEST_URL + '?t=' + Date.now());
+  if (!resp.ok) throw new Error('Could not reach library (' + resp.status + ')');
+  const manifest = await resp.json();
+  try { localStorage.setItem('wt_lib_manifest', JSON.stringify(manifest)); } catch (e) {}
+
+  let failed = 0;
+  let done = 0;
+  const have = new Set(await libStore.names());
+  for (const v of manifest.videos) {
+    done++;
+    const label = `${done}/${manifest.videos.length} ${v.title.slice(0, 40)}`;
+    if (!libIds.has(v.videoId)) {
+      try {
+        onStatus(`⬇ ${label}`);
+        await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⬇ ${label} — ${Math.round(p * 100)}%`));
+        if (v.thumbUrl) await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+      } catch (e) {
+        failed++;
+        onStatus(`⚠ ${label} failed, continuing`);
+      }
+    } else {
+      // Replace files whose bytes changed server-side (e.g. re-encodes) — size is our cheap content hash.
+      let localSize = null;
+      try { localSize = await libStore.stat(`${v.videoId}.mp4`); } catch(e) {}
+      if (localSize !== null && v.size && localSize !== v.size) {
+        try {
+          onStatus(`⟳ ${label} (updated)`);
+          await libStore.remove(`${v.videoId}.mp4`);
+          await libStore.save(`${v.videoId}.mp4`, v.url, p => onStatus(`⟳ ${label} — ${Math.round(p * 100)}%`));
+        } catch (e) {
+          failed++;
+          onStatus(`⚠ ${label} failed, continuing`);
+        }
+      }
+      if (v.thumbUrl && !have.has(`${v.videoId}.jpg`)) {
+        // Repair thumbs for videos synced under an older/interrupted manifest.
+        await libStore.save(`${v.videoId}.jpg`, v.thumbUrl).catch(() => {});
+      }
+    }
+  }
+
+  // Only evict stale local files when every download succeeded — on a partial
+  // failure, keeping old content beats leaving the car-trip device with less.
+  if (failed === 0) {
+    const want = new Set(manifest.videos.flatMap(v => [`${v.videoId}.mp4`, `${v.videoId}.jpg`]));
+    for (const name of await libStore.names()) {
+      if (!want.has(name)) await libStore.remove(name);
+    }
+  }
+
+  await refreshLibIds();
+  try { localStorage.setItem('wt_lib_synced_at', String(Date.now())); } catch (e) {}
+  onStatus(failed === 0 ? 'Up to date ✓' : `⚠ Synced with ${failed} failed — old videos kept`);
+}
+
+// =============================================
 // SETTINGS
 // =============================================
 $('settingsBtn').onclick = () => {
@@ -1408,8 +1657,38 @@ function openSettings() {
   $('setTimer').value = cfg.timerSeconds;
   $('setPin').value = cfg.pin;
   renderSettingsChannels();
+  renderOfflinePanel();
   showOnly('settingsScreen');
 }
+
+function renderOfflinePanel() {
+  $('offlineToggle').checked = offlineEnabled();
+  $('offlinePanel').classList.toggle('hidden', !offlineEnabled());
+  const at = +localStorage.getItem('wt_lib_synced_at') || 0;
+  $('syncStatus').textContent = at ? `Last synced ${new Date(at).toLocaleString()}` : 'Not synced yet';
+  if (offlineEnabled()) updateSyncUsage();
+}
+async function updateSyncUsage() {
+  try {
+    const n = (await libStore.names()).filter(x => x.endsWith('.mp4')).length;
+    const bytes = await libStore.usage();
+    $('syncUsage').textContent = `${n} videos on device · ${(bytes / 1e9).toFixed(2)} GB`;
+  } catch(e) { $('syncUsage').textContent = ''; }
+}
+$('offlineToggle').onchange = function() {
+  localStorage.setItem('wt_offline_enabled', this.checked ? '1' : '0');
+  renderOfflinePanel();
+};
+$('syncBtn').onclick = async () => {
+  $('syncBtn').disabled = true;
+  try {
+    await syncLibrary(msg => { $('syncStatus').textContent = msg; });
+  } catch(e) {
+    $('syncStatus').textContent = '⚠ ' + e.message;
+  }
+  $('syncBtn').disabled = false;
+  updateSyncUsage();
+};
 
 function renderSettingsChannels() {
   const el = $('settingsChannelList');
@@ -1494,6 +1773,10 @@ $('addChannelBtn').onclick = async () => {
     } catch(e) {}
     btn.textContent = '+ Add Channel';
     btn.disabled = false;
+    if (cfg.channels.some(c => c.id === id)) {
+      alert('That channel is already in the list');
+      return;
+    }
     cfg.channels.push({ name, id, emoji: '🎵', avatar: plThumb });
     renderSettingsChannels();
     $('addName').value = '';
@@ -1547,6 +1830,11 @@ $('addChannelBtn').onclick = async () => {
   btn.textContent = '+ Add Channel';
   btn.disabled = false;
 
+  if (cfg.channels.some(c => c.id === id)) {
+    alert('That channel is already in the list');
+    return;
+  }
+
   cfg.channels.push({ name, id, emoji, avatar });
   renderSettingsChannels();
   $('addName').value = '';
@@ -1560,7 +1848,7 @@ $('saveBtn').onclick = async () => {
   if (!/^\d{4}$/.test(p)) return alert('PIN must be exactly 4 digits');
   cfg.timerSeconds = t;
   cfg.pin = p;
-  await saveConfig(cfg);
+  const ok = await saveConfig(cfg);
   // Drop any watch-history entries whose source channel/playlist was removed.
   const validIds = new Set(cfg.channels.map(c => c.id));
   for (const vid of Object.keys(watchHistory)) {
@@ -1570,7 +1858,7 @@ $('saveBtn').onclick = async () => {
       await deleteWatchEntry(vid);
     }
   }
-  $('saveBtn').textContent = 'Saved!';
+  $('saveBtn').textContent = ok ? 'Saved!' : '⚠ Save failed — offline?';
   setTimeout(() => $('saveBtn').textContent = 'Save', 1500);
 };
 const exitSettings = async () => {
@@ -1610,6 +1898,18 @@ window.onYouTubeIframeAPIReady = () => { ytReady = true; };
     if (e && e.channelId && !validIds.has(e.channelId)) {
       delete watchHistory[vid];
       deleteWatchEntry(vid);
+    }
+  }
+  if (offlineEnabled()) {
+    await refreshLibIds().catch(() => {});
+    const m = getLibManifest();
+    // Offline (or API unreachable) with a synced library -> library mode.
+    // loadConfig() above already probed /api/config; reuse that result instead
+    // of re-probing reachability here.
+    const online = configFromServer;
+    if (!online && m && libIds.size > 0) {
+      libraryMode = true;
+      cfg.channels = cfg.channels.filter(ch => m.videos.some(v => v.channelId === ch.id && libIds.has(v.videoId)));
     }
   }
   // Shuffle channel order each session for variety
