@@ -601,6 +601,9 @@
 // CONFIG
 // =============================================
 
+const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const API_BASE = IS_NATIVE ? 'https://pwa-watchtime-youtube.vercel.app' : '';
+
 const DEFAULT_CONFIG = {
   pin: '1234',
   timerSeconds: 30,
@@ -613,7 +616,7 @@ const DEFAULT_CONFIG = {
 
 async function loadConfig() {
   try {
-    const resp = await fetch('/api/config', { signal: AbortSignal.timeout(5000) });
+    const resp = await fetch(API_BASE + '/api/config', { signal: AbortSignal.timeout(5000) });
     if (resp.ok) {
       const c = await resp.json();
       localStorage.setItem('wt_cfg', JSON.stringify(c));
@@ -631,7 +634,7 @@ async function loadConfig() {
 async function saveConfig(c) {
   localStorage.setItem('wt_cfg', JSON.stringify(c));
   try {
-    await fetch('/api/config', {
+    await fetch(API_BASE + '/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
@@ -646,7 +649,7 @@ let cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG)); // placeholder until async
 
 async function loadWatchHistory() {
   try {
-    const resp = await fetch('/api/watch-history', { signal: AbortSignal.timeout(5000) });
+    const resp = await fetch(API_BASE + '/api/watch-history', { signal: AbortSignal.timeout(5000) });
     if (resp.ok) {
       const data = await resp.json();
       const map = data && typeof data === 'object' ? data : {};
@@ -669,7 +672,7 @@ async function saveWatchEntry(entry) {
     localStorage.setItem('wt_history', JSON.stringify(cached));
   } catch(e) {}
   try {
-    await fetch('/api/watch-history', {
+    await fetch(API_BASE + '/api/watch-history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
@@ -685,7 +688,7 @@ async function deleteWatchEntry(videoId) {
     localStorage.setItem('wt_history', JSON.stringify(cached));
   } catch(e) {}
   try {
-    await fetch(`/api/watch-history?videoId=${encodeURIComponent(videoId)}`, {
+    await fetch(`${API_BASE}/api/watch-history?videoId=${encodeURIComponent(videoId)}`, {
       method: 'DELETE',
       signal: AbortSignal.timeout(5000),
     });
@@ -862,7 +865,7 @@ function renderSidebar() {
     const card = document.createElement('div');
     card.className = 'feed-card' + (selectedFeed === i ? ' selected' : '');
     const icon = ch.avatar
-      ? `<img class="avatar" src="${ch.id.startsWith('PL') ? ch.avatar : '/api/avatar/' + ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`
+      ? `<img class="avatar" src="${ch.id.startsWith('PL') ? ch.avatar : API_BASE + '/api/avatar/' + ch.id}" alt="" onerror="this.outerHTML='<div class=\\'emoji\\'>${ch.emoji}</div>'">`
       : `<div class="emoji">${ch.emoji}</div>`;
     card.innerHTML = `${icon}<div class="name">${ch.name}</div>`;
     card.onclick = () => selectFeed(i);
@@ -1065,7 +1068,7 @@ $('shuffleBtn').onclick = async () => {
 
 async function fetchVideos(channelId) {
   try {
-    const resp = await fetch(`/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
+    const resp = await fetch(`${API_BASE}/api/yt-feed/${channelId}`, { signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return [];
     const videos = await resp.json();
     return videos.map(v => ({
@@ -1422,7 +1425,7 @@ function renderSettingsChannels() {
     const header = document.createElement('div');
     header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
     header.innerHTML = `
-      <img src="/api/avatar/${ch.id}" style="width:32px;height:32px;border-radius:50%;flex-shrink:0" onerror="this.outerHTML='<span style=font-size:24px>${ch.emoji}</span>'">
+      <img src="${API_BASE}/api/avatar/${ch.id}" style="width:32px;height:32px;border-radius:50%;flex-shrink:0" onerror="this.outerHTML='<span style=font-size:24px>${ch.emoji}</span>'">
       <input type="text" value="${escHtml(ch.name)}" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;" data-field="name" data-i="${i}">
       <button class="btn btn-danger" data-i="${i}">Remove</button>
     `;
@@ -1483,7 +1486,7 @@ $('addChannelBtn').onclick = async () => {
     // Fetch playlist thumbnail
     let plThumb = null;
     try {
-      const resp = await fetch(`/api/playlist-info?playlistId=${id}`, { signal: AbortSignal.timeout(10000) });
+      const resp = await fetch(`${API_BASE}/api/playlist-info?playlistId=${id}`, { signal: AbortSignal.timeout(10000) });
       if (resp.ok) {
         const data = await resp.json();
         plThumb = data.thumbnail;
@@ -1506,7 +1509,7 @@ $('addChannelBtn').onclick = async () => {
   const handleMatch = id.match(/@([\w.-]+)/);
   if (handleMatch && !id.startsWith('UC')) {
     try {
-      const resp = await fetch(`/api/resolve-channel?handle=${encodeURIComponent(handleMatch[0])}`, { signal: AbortSignal.timeout(10000) });
+      const resp = await fetch(`${API_BASE}/api/resolve-channel?handle=${encodeURIComponent(handleMatch[0])}`, { signal: AbortSignal.timeout(10000) });
       if (resp.ok) {
         const data = await resp.json();
         id = data.channelId;
@@ -1533,7 +1536,7 @@ $('addChannelBtn').onclick = async () => {
   // Fetch avatar if we don't have one yet (direct channel ID entry)
   if (!avatar) {
     try {
-      const resp = await fetch(`/api/resolve-channel?channelId=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
+      const resp = await fetch(`${API_BASE}/api/resolve-channel?channelId=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
       if (resp.ok) {
         const data = await resp.json();
         avatar = data.avatar;

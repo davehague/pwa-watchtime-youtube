@@ -1,4 +1,5 @@
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   const { handle, channelId } = req.query;
 
   if (!handle && !channelId) {

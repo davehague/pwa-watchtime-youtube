@@ -1,0 +1,8 @@
+ios/
+android/
+scripts/
+capacitor.config.json
+assets/
+www/
+node_modules/
+docs/

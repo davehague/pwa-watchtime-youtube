@@ -12,6 +12,7 @@ const PLAYLIST_TTL_SECONDS = 60 * 60 * 12;    // 12 hours — refetch playlist c
 const STALE_TTL_SECONDS = 60 * 60 * 24 * 7;   // 7 days — stale fallback cache
 
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   const { channelId } = req.query;
 
   if (!channelId || (!channelId.startsWith('UC') && !channelId.startsWith('PL'))) {
@@ -59,7 +60,6 @@ export default async function handler(req, res) {
 
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(200).json(videos);
   } catch (e) {
     // Both RSS and Data API failed — serve stale from Redis if we have it
@@ -69,7 +69,6 @@ export default async function handler(req, res) {
         if (stale && Array.isArray(stale) && stale.length) {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('X-From-Stale-Cache', '1');
-          res.setHeader('Access-Control-Allow-Origin', '*');
           return res.status(200).json(stale);
         }
       } catch {}
