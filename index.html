@@ -1071,11 +1071,14 @@ $('videoPanel').addEventListener('scroll', () => {
   if (selectedFeed !== 'all') return;
   const panel = $('videoPanel');
   if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 200) {
-    // Skip the rebuild when every available video is already shown —
-    // rebuilding anyway makes the grid visibly flash (noticeable in
-    // library mode where feeds are small).
-    const showing = $('videoGrid').querySelectorAll('.video-card:not(.continue-card)').length;
-    if (showing >= getRoundRobinVideos(Infinity).length) return;
+    // Skip the rebuild when every available video has already been requested —
+    // rebuilding anyway makes the grid visibly flash (worst during iOS
+    // rubber-band overscroll, which fires scroll events while pinned at the
+    // bottom). Compare requested batches against the available pool rather
+    // than counting DOM cards: the continue card de-dupes its regular card
+    // out of the grid, so a DOM count runs permanently one short and would
+    // never trip this guard.
+    if (roundRobinIndex * VIDEOS_PER_BATCH >= getRoundRobinVideos(Infinity).length) return;
     renderRoundRobin();
   }
 });
