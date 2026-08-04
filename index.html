@@ -1527,6 +1527,17 @@ const opfsStore = {
     for await (const name of d.keys()) out.push(name);
     return out;
   },
+  // name -> byte size, in one directory pass. Callers use size > 0 as the
+  // validity test: a 0-byte file (interrupted download) counts as NOT present.
+  async sizes() {
+    if (!this.supported()) return new Map();
+    const d = await this.dir(); const out = new Map();
+    for await (const [name, handle] of d.entries()) {
+      if (handle.kind !== 'file') continue;
+      out.set(name, (await handle.getFile()).size);
+    }
+    return out;
+  },
   async save(name, url, onProgress) {
     const d = await this.dir();
     const fh = await d.getFileHandle(name, { create: true });
@@ -1544,11 +1555,18 @@ const opfsStore = {
         got += value.length;
         if (onProgress && total) onProgress(got / total);
       }
+      // Reject empty/truncated downloads so we never persist a 0-byte or partial
+      // file — those pass an existence check but render as a broken image / black
+      // video, and (for thumbs) the repair guard then refuses to re-fetch them.
+      if (got === 0 || (total && got !== total)) throw new Error('incomplete ' + got + '/' + total);
+      await w.close();
     } catch (e) {
+      // getFileHandle({create}) already committed a 0-byte entry; abort() only
+      // discards the swap, so remove the entry outright or it lingers as junk.
       await w.abort().catch(() => {});
+      await d.removeEntry(name).catch(() => {});
       throw e;
     }
-    await w.close();
   },
   async fileUrl(name) {
     const d = await this.dir();
@@ -1580,7 +1598,10 @@ function getLibManifest() {
   try { return JSON.parse(localStorage.getItem('wt_lib_manifest')); } catch(e) { return null; }
 }
 async function refreshLibIds() {
-  libIds = new Set((await libStore.names()).filter(n => n.endsWith('.mp4')).map(n => n.slice(0, -4)));
+  // A video is "on this device" only if its .mp4 exists AND has bytes — a 0-byte
+  // file from an interrupted download would otherwise show in the grid and play black.
+  const sizes = await libStore.sizes();
+  libIds = new Set([...sizes].filter(([n, s]) => n.endsWith('.mp4') && s > 0).map(([n]) => n.slice(0, -4)));
 }
 
 async function syncLibrary(onStatus) {
@@ -1594,7 +1615,9 @@ async function syncLibrary(onStatus) {
 
   let failed = 0;
   let done = 0;
-  const have = new Set(await libStore.names());
+  // Only count files that actually have bytes as "already have" — a 0-byte .jpg
+  // must fall through to the repair branch and be re-downloaded, not trusted.
+  const have = new Set([...(await libStore.sizes())].filter(([, s]) => s > 0).map(([n]) => n));
   for (const v of manifest.videos) {
     done++;
     const label = `${done}/${manifest.videos.length} ${v.title.slice(0, 40)}`;
@@ -1670,7 +1693,9 @@ function renderOfflinePanel() {
 }
 async function updateSyncUsage() {
   try {
-    const n = (await libStore.names()).filter(x => x.endsWith('.mp4')).length;
+    const sizes = await libStore.sizes();
+    // Count only playable videos (non-zero .mp4) so broken files don't inflate the total.
+    const n = [...sizes].filter(([x, s]) => x.endsWith('.mp4') && s > 0).length;
     const bytes = await libStore.usage();
     $('syncUsage').textContent = `${n} videos on device · ${(bytes / 1e9).toFixed(2)} GB`;
   } catch(e) { $('syncUsage').textContent = ''; }
