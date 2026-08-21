@@ -163,12 +163,13 @@
   .quick-timer-presets button.selected { border-color: var(--green); color: var(--green); }
 
   .back-btn {
+    position: relative;
     background: var(--blue);
     border: none;
     color: #fff;
-    height: 42px;
-    padding: 0 16px;
-    border-radius: 21px;
+    height: 46px;
+    padding: 0 22px;
+    border-radius: 23px;
     font-size: 22px;
     font-weight: 700;
     cursor: pointer;
@@ -179,6 +180,13 @@
     line-height: 1;
   }
   .back-btn:active { transform: scale(0.9); }
+  /* Extend the Back tap target well beyond the visible pill so a child's
+     near-misses still register. Stays clear of the 🔄 button on the right. */
+  #backBtn::before {
+    content: '';
+    position: absolute;
+    top: -14px; bottom: -14px; left: -14px; right: -6px;
+  }
 
   /* ---- SCREENS ---- */
   .screen { padding-top: calc(62px + env(safe-area-inset-top, 0px)); min-height: 100vh; overflow-y: auto; max-height: 100vh; }
